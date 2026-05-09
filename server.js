@@ -6,7 +6,7 @@ const crypto = require("crypto");
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
-const MAX_PLAYERS = 4;
+const DEFAULT_MAX_PLAYERS = 4;
 const ROUND_DURATION_MS = 12 * 60_000;
 const CHOOSE_DURATION_MS = 15_000;
 const TURN_GAP_MS = 4_000;
@@ -21,6 +21,7 @@ const MIME_TYPES = {
   ".jpeg": "image/jpeg",
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
+  ".mp4": "video/mp4",
 };
 
 const WORD_BANK = [
@@ -199,6 +200,9 @@ function getTeamMap(room) {
 }
 
 function areTeamsReady(room) {
+  if (room.mode !== "2x2") {
+    return true;
+  }
   if (room.players.length !== 4) {
     return false;
   }
@@ -244,6 +248,7 @@ function serializeRoom(room, viewerId) {
   return {
     roomCode: room.code,
     phase: room.phase,
+    mode: room.mode,
     rounds: room.rounds,
     roundNumber: room.roundNumber,
     turnNumber: room.turnNumber,
@@ -280,7 +285,7 @@ function serializeRoom(room, viewerId) {
     roundChat: room.roundChat,
     roomChat: room.roomChat,
     timeLeftMs,
-    maxPlayers: MAX_PLAYERS,
+    maxPlayers: room.maxPlayers,
     teamsReady: areTeamsReady(room),
     pendingInvite: room.pendingInvite
       ? {
@@ -301,10 +306,11 @@ function serializePublicRoom(room) {
   return {
     roomCode: room.code,
     phase: room.phase,
+    mode: room.mode,
     rounds: room.rounds,
     roundNumber: room.roundNumber,
     playerCount: room.players.length,
-    maxPlayers: MAX_PLAYERS,
+    maxPlayers: room.maxPlayers,
     hostName: room.players[0]?.name || "Host",
     players: room.players.map((player) => ({
       id: player.id,
@@ -405,7 +411,8 @@ function startPlaying(room, chosenWord) {
 function beginTurn(room) {
   clearRoomTimer(room);
 
-  if (room.players.length < 4 || !areTeamsReady(room)) {
+  const minimumPlayers = room.mode === "x1" ? 2 : 4;
+  if (room.players.length < minimumPlayers || !areTeamsReady(room)) {
     room.phase = "lobby";
     room.drawerId = null;
     room.startedAt = null;
@@ -414,7 +421,12 @@ function beginTurn(room) {
     room.wordOptions = [];
     room.strokes = [];
     room.liveStroke = null;
-    systemMessage(room, "Aguardando 4 jogadores com as duplas fechadas.");
+    systemMessage(
+      room,
+      room.mode === "x1"
+        ? "Aguardando 2 jogadores para iniciar."
+        : "Aguardando 4 jogadores com as duplas fechadas."
+    );
     pushRoomState(room);
     return;
   }
@@ -446,11 +458,14 @@ function beginTurn(room) {
   }, CHOOSE_DURATION_MS);
 }
 
-function createRoom(playerName) {
+function createRoom(playerName, mode = "2x2") {
+  const normalizedMode = mode === "x1" ? "x1" : "2x2";
   const roomCode = makeRoomCode();
   const playerId = randomId("player");
   const room = {
     code: roomCode,
+    mode: normalizedMode,
+    maxPlayers: normalizedMode === "x1" ? 2 : DEFAULT_MAX_PLAYERS,
     phase: "lobby",
     rounds: 3,
     roundNumber: 0,
@@ -480,7 +495,7 @@ function joinRoom(roomCode, playerName) {
   if (!room) {
     throw new Error("Sala não encontrada.");
   }
-  if (room.players.length >= MAX_PLAYERS) {
+  if (room.players.length >= room.maxPlayers) {
     throw new Error("A sala já está cheia.");
   }
 
@@ -535,7 +550,7 @@ function leaveRoom(playerId) {
     }
   }
 
-  if (room.players.length < 4 && room.phase !== "lobby" && room.phase !== "finished") {
+  if (room.players.length < (room.mode === "x1" ? 2 : 4) && room.phase !== "lobby" && room.phase !== "finished") {
     clearRoomTimer(room);
     room.phase = "lobby";
     room.turnNumber = 0;
@@ -546,7 +561,9 @@ function leaveRoom(playerId) {
     room.deadlineAt = null;
     room.strokes = [];
     room.liveStroke = null;
-    clearPairing(room);
+    if (room.mode === "2x2") {
+      clearPairing(room);
+    }
     systemMessage(room, "Partida interrompida por falta de jogadores.");
   }
 
@@ -599,10 +616,13 @@ function handleAction(playerId, type, payload) {
     if (!player.isHost) {
       throw new Error("Só o host pode iniciar.");
     }
-    if (room.players.length !== 4) {
+    if (room.mode === "x1" && room.players.length !== 2) {
+      throw new Error("O modo x1 precisa de 2 jogadores.");
+    }
+    if (room.mode === "2x2" && room.players.length !== 4) {
       throw new Error("O modo em dupla precisa de 4 jogadores.");
     }
-    if (!areTeamsReady(room)) {
+    if (room.mode === "2x2" && !areTeamsReady(room)) {
       throw new Error("Formem as duas duplas antes de iniciar.");
     }
     room.players.forEach((item) => {
@@ -619,6 +639,9 @@ function handleAction(playerId, type, payload) {
   }
 
   if (type === "invite-partner") {
+    if (room.mode !== "2x2") {
+      throw new Error("Duplas só existem no modo 2x2.");
+    }
     if (room.phase !== "lobby") {
       throw new Error("As duplas só podem ser definidas no lobby.");
     }
@@ -646,6 +669,9 @@ function handleAction(playerId, type, payload) {
   }
 
   if (type === "respond-partner-invite") {
+    if (room.mode !== "2x2") {
+      throw new Error("Duplas só existem no modo 2x2.");
+    }
     if (!room.pendingInvite || room.pendingInvite.toId !== playerId) {
       throw new Error("Nenhum convite pendente para você.");
     }
@@ -672,6 +698,9 @@ function handleAction(playerId, type, payload) {
   }
 
   if (type === "reset-teams") {
+    if (room.mode !== "2x2") {
+      throw new Error("Duplas só existem no modo 2x2.");
+    }
     if (!player.isHost || room.phase !== "lobby") {
       throw new Error("Só o host pode refazer as duplas no lobby.");
     }
@@ -711,21 +740,25 @@ function handleAction(playerId, type, payload) {
 
     const isCorrect = normalizeWord(guessText) === normalizeWord(room.word);
     if (isCorrect) {
-      const partner = getPartner(room, room.drawerId);
-      if (!partner || partner.id !== playerId) {
-        roundMessage(room, {
-          type: "system",
-          text: `${player.name} acertou, mas apenas o par do desenhista pontua nesta rodada.`,
-        });
-        pushRoomState(room);
-        return;
-      }
       const awardedPoints = computeGuessPoints(room);
       room.guessedPlayerIds.push(playerId);
-      player.score += awardedPoints;
-      const drawer = getDrawer(room);
-      if (drawer) {
-        drawer.score += awardedPoints;
+      if (room.mode === "2x2") {
+        const partner = getPartner(room, room.drawerId);
+        if (!partner || partner.id !== playerId) {
+          roundMessage(room, {
+            type: "system",
+            text: `${player.name} acertou, mas apenas o par do desenhista pontua nesta rodada.`,
+          });
+          pushRoomState(room);
+          return;
+        }
+        player.score += awardedPoints;
+        const drawer = getDrawer(room);
+        if (drawer) {
+          drawer.score += awardedPoints;
+        }
+      } else {
+        player.score += awardedPoints;
       }
       roundMessage(room, {
         type: "correct",
@@ -733,7 +766,12 @@ function handleAction(playerId, type, payload) {
         playerName: player.name,
         text: "acertou!",
       });
-      systemMessage(room, `${player.name} acertou a palavra e a dupla marcou ${awardedPoints} pontos.`);
+      systemMessage(
+        room,
+        room.mode === "2x2"
+          ? `${player.name} acertou a palavra e a dupla marcou ${awardedPoints} pontos.`
+          : `${player.name} acertou a palavra e marcou ${awardedPoints} pontos.`
+      );
       pushRoomState(room);
       finishTurn(room, "guessed");
       return;
@@ -855,7 +893,7 @@ async function handleApi(req, res, url) {
 
   if (req.method === "POST" && pathname === "/api/rooms/create") {
     const body = await readBody(req);
-    const { room, playerId } = createRoom(body.playerName);
+    const { room, playerId } = createRoom(body.playerName, body.mode);
     sendJson(res, 200, {
       playerId,
       room: serializeRoom(room, playerId),

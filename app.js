@@ -6,6 +6,7 @@ const session = {
 const state = {
   room: null,
   publicRooms: [],
+  entryStage: "landing",
   eventSource: null,
   timerHandle: null,
   roomsPollHandle: null,
@@ -13,7 +14,6 @@ const state = {
   color: "#151515",
   size: 4,
   pointerStrokeId: "",
-  isDrawing: false,
   pointerActive: false,
   chatTab: "guess",
   voiceJoined: false,
@@ -27,11 +27,18 @@ const rtcConfig = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
 
+const landingScreen = document.querySelector("#landingScreen");
 const welcomeScreen = document.querySelector("#welcomeScreen");
 const gameScreen = document.querySelector("#gameScreen");
+const enterPortalButton = document.querySelector("#enterPortalButton");
 const playerNameInput = document.querySelector("#playerNameInput");
 const roomCodeInput = document.querySelector("#roomCodeInput");
-const createRoomButton = document.querySelector("#createRoomButton");
+const createRoomModeButton = document.querySelector("#createRoomModeButton");
+const createSoloRoomButton = document.querySelector("#createSoloRoomButton");
+const createTeamRoomButton = document.querySelector("#createTeamRoomButton");
+const showJoinPanelButton = document.querySelector("#showJoinPanelButton");
+const createModePanel = document.querySelector("#createModePanel");
+const joinPanel = document.querySelector("#joinPanel");
 const joinRoomButton = document.querySelector("#joinRoomButton");
 const refreshRoomsButton = document.querySelector("#refreshRoomsButton");
 const openRoomsList = document.querySelector("#openRoomsList");
@@ -58,6 +65,7 @@ const boardCanvas = document.querySelector("#boardCanvas");
 const boardFrame = document.querySelector("#boardFrame");
 const boardOverlay = document.querySelector("#boardOverlay");
 const chatList = document.querySelector("#chatList");
+const chatStatusNotice = document.querySelector("#chatStatusNotice");
 const chatEyebrow = document.querySelector("#chatEyebrow");
 const chatTitle = document.querySelector("#chatTitle");
 const guessTabButton = document.querySelector("#guessTabButton");
@@ -71,7 +79,14 @@ const ctx = boardCanvas.getContext("2d");
 const resizeObserver = new ResizeObserver(() => renderBoard());
 resizeObserver.observe(boardFrame);
 
-createRoomButton.addEventListener("click", () => createRoom());
+enterPortalButton.addEventListener("click", () => {
+  state.entryStage = "portal";
+  render();
+});
+createRoomModeButton.addEventListener("click", () => toggleCreateModePanel());
+createSoloRoomButton.addEventListener("click", () => createRoom("x1"));
+createTeamRoomButton.addEventListener("click", () => createRoom("2x2"));
+showJoinPanelButton.addEventListener("click", () => toggleJoinPanel());
 joinRoomButton.addEventListener("click", () => joinRoom());
 refreshRoomsButton.addEventListener("click", () => refreshPublicRooms(true));
 voiceToggleButton.addEventListener("click", toggleVoiceChannel);
@@ -132,7 +147,7 @@ async function api(url, options = {}) {
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error || "Falha na requisição.");
+    throw new Error(payload.error || "Falha na requisicao.");
   }
   return payload;
 }
@@ -148,12 +163,12 @@ function requireName() {
   return value;
 }
 
-async function createRoom() {
+async function createRoom(mode = "2x2") {
   try {
     const playerName = requireName();
     const payload = await api("/api/rooms/create", {
       method: "POST",
-      body: { playerName },
+      body: { playerName, mode },
     });
     connectToRoom(payload.playerId, payload.room);
   } catch (error) {
@@ -167,7 +182,7 @@ async function joinRoom() {
     const roomCode = roomCodeInput.value.trim().toUpperCase();
     if (!roomCode) {
       roomCodeInput.focus();
-      throw new Error("Informe o código da sala.");
+      throw new Error("Informe o codigo da sala.");
     }
     const payload = await api("/api/rooms/join", {
       method: "POST",
@@ -241,6 +256,7 @@ function resetSession() {
   session.playerId = "";
   sessionStorage.removeItem("draw-battle-player-id");
   state.room = null;
+  state.entryStage = "portal";
   startPublicRoomsPolling();
   render();
 }
@@ -315,8 +331,8 @@ async function toggleVoiceChannel() {
     if (state.room) {
       syncVoicePeers(state.room);
     }
-  } catch (error) {
-    window.alert("Não foi possível acessar o microfone.");
+  } catch {
+    window.alert("Nao foi possivel acessar o microfone.");
   }
 }
 
@@ -587,10 +603,12 @@ function phaseText(room) {
 
 function render() {
   const hasRoom = Boolean(state.room);
-  welcomeScreen.classList.toggle("hidden", hasRoom);
+  landingScreen.classList.toggle("hidden", hasRoom || state.entryStage !== "landing");
+  welcomeScreen.classList.toggle("hidden", hasRoom || state.entryStage !== "portal");
   gameScreen.classList.toggle("hidden", !hasRoom);
 
   if (!hasRoom) {
+    renderEntryPanels();
     renderOpenRooms();
     renderBoardEmpty();
     return;
@@ -612,8 +630,28 @@ function render() {
   renderWordChoices(room);
   renderControls(room);
   renderOverlay(room);
+  renderChatStatus(room);
   renderBoard();
   startCountdown();
+}
+
+function renderEntryPanels() {
+  const showJoin = !joinPanel.classList.contains("hidden");
+  const showMode = !createModePanel.classList.contains("hidden");
+  showJoinPanelButton.classList.toggle("active", showJoin);
+  createRoomModeButton.classList.toggle("active", showMode);
+}
+
+function toggleJoinPanel() {
+  joinPanel.classList.toggle("hidden");
+  createModePanel.classList.add("hidden");
+  renderEntryPanels();
+}
+
+function toggleCreateModePanel() {
+  createModePanel.classList.toggle("hidden");
+  joinPanel.classList.add("hidden");
+  renderEntryPanels();
 }
 
 function renderTeamPanel(room) {
@@ -621,19 +659,29 @@ function renderTeamPanel(room) {
     return;
   }
 
+  const voiceCount = room.players.filter((player) => player.voiceEnabled).length;
+
+  if (room.mode !== "2x2") {
+    teamPanel.innerHTML = `
+      <strong>Modo X1</strong>
+      <p>Sala direta para 2 jogadores. Quem desenha depende do acerto rapido do outro para pontuar.</p>
+      <p>${voiceCount} jogador(es) na voz.</p>
+    `;
+    return;
+  }
+
   const partnerName = room.me?.partnerName || "";
   const invite = room.pendingInvite;
-  const voiceCount = room.players.filter((player) => player.voiceEnabled).length;
   let description = "Fechem as duplas para liberar a partida 2x2.";
 
   if (partnerName) {
-    description = `Seu par é ${partnerName}. Os pontos da rodada são compartilhados pela dupla.`;
+    description = `Seu par e ${partnerName}. Os pontos da rodada sao compartilhados pela dupla.`;
   } else if (invite?.toId === room.me?.id) {
-    description = `${invite.fromName} quer formar dupla com você.`;
+    description = `${invite.fromName} quer formar dupla com voce.`;
   } else if (invite?.fromId === room.me?.id) {
     description = `Convite enviado para ${invite.toName}.`;
   } else if (room.teamsReady) {
-    description = "As duas duplas estão prontas para começar.";
+    description = "As duas duplas estao prontas para comecar.";
   }
 
   teamPanel.innerHTML = `
@@ -649,7 +697,7 @@ function renderOpenRooms() {
   }
 
   if (!state.publicRooms.length) {
-    openRoomsList.innerHTML = `<p class="open-rooms__empty">Nenhuma sala aberta no momento.</p>`;
+    openRoomsList.innerHTML = `<p class="open-rooms__empty">Nao existe sala no momento.</p>`;
     return;
   }
 
@@ -658,7 +706,7 @@ function renderOpenRooms() {
       <article class="room-card">
         <div class="room-card__main">
           <strong>${escapeHtml(room.roomCode)}</strong>
-          <p>${escapeHtml(room.hostName)} · ${room.playerCount}/${room.maxPlayers} jogadores · ${room.phase === "lobby" ? "Lobby" : "Em jogo"}</p>
+          <p>${escapeHtml(room.hostName)} · ${room.mode === "x1" ? "X1" : "2x2"} · ${room.playerCount}/${room.maxPlayers} jogadores · ${room.phase === "lobby" ? "Lobby" : "Em jogo"}</p>
         </div>
         <button class="primary-button room-card__button" type="button" data-room-code="${escapeHtml(room.roomCode)}">Entrar</button>
       </article>
@@ -682,6 +730,7 @@ function renderPlayers(room) {
       const incomingInvite = room.pendingInvite?.toId === room.me?.id && room.pendingInvite?.fromId === player.id;
       const outgoingInvite = room.pendingInvite?.fromId === room.me?.id && room.pendingInvite?.toId === player.id;
       const canInvite =
+        room.mode === "2x2" &&
         room.phase === "lobby" &&
         room.players.length === 4 &&
         !room.teamsReady &&
@@ -714,14 +763,17 @@ function renderPlayers(room) {
             ? `<button class="ghost-button player-card__action" type="button" data-player-action="invite" data-player-id="${player.id}">Chamar dupla</button>`
             : "";
 
+      const initials = escapeHtml((player.name || "?").slice(0, 1).toUpperCase());
+
       return `
         <article class="player-card ${isMe ? "player-card--me" : ""}">
+          <div class="player-card__avatar">${initials}</div>
           <div class="player-card__body">
-            <strong>${index + 1}. ${escapeHtml(player.name)}</strong>
+            <strong>${escapeHtml(player.name)}</strong>
             <p>${badges || "Na disputa"}</p>
             ${action}
           </div>
-          <span>${player.score} pts</span>
+          <span class="player-card__score">${player.score} pts</span>
         </article>
       `;
     })
@@ -798,9 +850,17 @@ function renderWordChoices(room) {
 function renderControls(room) {
   const isHost = Boolean(room.me?.isHost);
   const startAllowedPhase = room.phase === "lobby" || room.phase === "finished";
+  const canStart =
+    room.mode === "x1"
+      ? room.players.length === 2
+      : room.players.length === 4 && room.teamsReady;
+
   roundsSelect.disabled = !isHost || room.phase !== "lobby";
-  startGameButton.disabled = !isHost || !startAllowedPhase || room.players.length !== 4 || !room.teamsReady;
-  resetTeamsButton.classList.toggle("hidden", !(isHost && room.phase === "lobby" && room.players.length === 4));
+  startGameButton.disabled = !isHost || !startAllowedPhase || !canStart;
+  resetTeamsButton.classList.toggle(
+    "hidden",
+    !(room.mode === "2x2" && isHost && room.phase === "lobby" && room.players.length === 4)
+  );
 
   const drawerActive = canDraw();
   clearBoardButton.disabled = !drawerActive;
@@ -824,13 +884,15 @@ function renderControls(room) {
 
   guessInput.disabled = !canGuess;
   guessInput.placeholder = meIsDrawer
-    ? "Você está desenhando"
+    ? "Voce esta desenhando"
     : alreadyGuessed
-      ? "Você já acertou"
+      ? "Voce ja acertou"
       : room.phase === "playing"
         ? isDrawerPartner
           ? "Tente acertar o desenho do seu par"
-          : "Você pode acompanhar, mas só o par pontua"
+          : room.mode === "2x2"
+            ? "Voce pode acompanhar, mas so o par pontua"
+            : "Tente acertar antes do tempo acabar"
         : "Aguardando rodada";
 
   guessForm.querySelector("button").disabled = !canGuess;
@@ -846,11 +908,13 @@ function renderOverlay(room) {
   let text = "";
 
   if (room.phase === "lobby") {
-    text = "Aguardando o host iniciar a partida";
+    text = room.mode === "x1"
+      ? "Aguardando 2 jogadores para iniciar"
+      : "Aguardando 4 jogadores e as duplas";
   } else if (room.phase === "choosing") {
-    text = meIsDrawer ? "Escolha uma palavra para começar" : `${room.drawerName} está escolhendo a palavra`;
+    text = meIsDrawer ? "Escolha uma palavra para comecar" : `${room.drawerName} esta escolhendo a palavra`;
   } else if (room.phase === "playing") {
-    text = meIsDrawer ? "Sua vez de desenhar" : `Adivinhe o desenho de ${room.drawerName}`;
+    text = meIsDrawer ? "" : `Adivinhe o desenho de ${room.drawerName}`;
   } else if (room.phase === "roundEnd") {
     text = `Palavra: ${room.revealedWord || "-"}`;
   } else if (room.phase === "finished") {
@@ -858,6 +922,7 @@ function renderOverlay(room) {
   }
 
   boardOverlay.textContent = text;
+  boardOverlay.classList.toggle("hidden", !text);
 }
 
 function renderChat(room) {
@@ -870,17 +935,24 @@ function renderChat(room) {
 
   chatList.innerHTML = activeFeed
     .map((item) => {
-      const label =
-        item.type === "system" ? "Sistema" : item.playerName || "Jogador";
+      const label = item.type === "system" ? "Sistema" : item.playerName || "Jogador";
       const className =
         item.type === "correct" ? "chat-item chat-item--correct" :
         item.type === "system" ? "chat-item chat-item--system" :
         item.type === "room" ? "chat-item chat-item--room" :
         "chat-item";
+      const timeLabel = item.createdAt ? "Agora" : "";
+      const initials = escapeHtml(label.slice(0, 1).toUpperCase());
 
       return `
         <article class="${className}">
-          <strong>${escapeHtml(label)}</strong>
+          <div class="chat-item__head">
+            <div class="chat-item__identity">
+              <span class="chat-item__avatar">${initials}</span>
+              <strong>${escapeHtml(label)}</strong>
+            </div>
+            <span class="chat-item__time">${timeLabel}</span>
+          </div>
           <p>${escapeHtml(item.text)}</p>
         </article>
       `;
@@ -888,6 +960,27 @@ function renderChat(room) {
     .join("");
 
   chatList.scrollTop = chatList.scrollHeight;
+}
+
+function renderChatStatus(room) {
+  if (!chatStatusNotice) {
+    return;
+  }
+
+  const meIsDrawer = room.drawerId === room.me?.id;
+  const shouldShow = room.phase === "playing" && meIsDrawer;
+  chatStatusNotice.classList.toggle("hidden", !shouldShow);
+
+  if (!shouldShow) {
+    chatStatusNotice.textContent = "";
+    return;
+  }
+
+  chatStatusNotice.innerHTML = `
+    <div class="chat-status-notice__eyebrow">Status da rodada</div>
+    <strong>Sua vez de desenhar</strong>
+    <p>Desenhe para o seu time acertar rapido.</p>
+  `;
 }
 
 function startCountdown() {
