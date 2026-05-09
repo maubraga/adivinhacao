@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1017">
+  <title>Draw Battle</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="page">
+    <section id="welcomeScreen" class="welcome-screen">
+      <div class="hero-panel">
+        <p class="eyebrow">Online party game</p>
+        <h1>Draw <span>Battle</span></h1>
+        <p class="hero-copy">
+          Desenhe, adivinhe rápido e dispute a liderança. Sala com até 5 pessoas, visual dark e lousa branca para manter o foco no desenho.
+        </p>
+
+        <div class="feature-row">
+          <span>Até 5 jogadores</span>
+          <span>Pontuação por tempo</span>
+          <span>Linha, formas e borracha</span>
+        </div>
+
+        <form id="entryForm" class="entry-card">
+          <label class="field">
+            <span>Seu nome</span>
+            <input id="playerNameInput" type="text" maxlength="24" placeholder="Digite seu nome" required>
+          </label>
+          <p class="login-hint">Cada jogador entra com nome obrigatório para criar ou acessar uma sala.</p>
+
+          <div class="entry-actions">
+            <button id="createRoomButton" class="primary-button" type="button">Criar sala</button>
+          </div>
+
+          <div class="join-row">
+            <label class="field">
+              <span>Código da sala</span>
+              <input id="roomCodeInput" type="text" maxlength="5" placeholder="ABCDE">
+            </label>
+            <button id="joinRoomButton" class="ghost-button" type="button">Entrar</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="gameScreen" class="game-screen hidden">
+      <header class="topbar panel">
+        <div>
+          <p class="eyebrow">Sala</p>
+          <h2 id="roomCodeLabel">-----</h2>
+        </div>
+        <div class="topbar-center">
+          <div class="status-pill">
+            <span id="phaseLabel">Lobby</span>
+          </div>
+          <div class="timer-pill">
+            <span id="timerLabel">00:00</span>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <label class="rounds-picker">
+            <span>Rodadas</span>
+            <select id="roundsSelect">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3" selected>3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+            </select>
+          </label>
+          <button id="startGameButton" class="primary-button" type="button">Iniciar</button>
+          <button id="leaveRoomButton" class="ghost-button" type="button">Sair</button>
+        </div>
+      </header>
+
+      <section class="layout">
+        <aside class="sidebar panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Jogadores</p>
+              <h3>Placar</h3>
+            </div>
+            <span id="playerCountLabel" class="meta-badge">0/5</span>
+          </div>
+          <div class="score-rules">
+            <strong>Pontos por acerto</strong>
+            <p>Até 1 min: 10 pts · 1 a 5 min: 3 pts · 5 a 10 min: 2 pts · acima de 10 min: 1 pt</p>
+          </div>
+          <div id="playersList" class="players-list"></div>
+        </aside>
+
+        <section class="board-section">
+          <div class="board-meta panel">
+            <div>
+              <p class="eyebrow">Rodada</p>
+              <h3 id="roundLabel">Lobby</h3>
+            </div>
+            <div class="word-card">
+              <p class="eyebrow">Palavra</p>
+              <strong id="wordLabel">Aguardando jogadores</strong>
+            </div>
+          </div>
+
+          <div class="toolbar panel">
+            <div class="tool-group" id="toolGroup">
+              <button class="tool-button active" data-tool="pen" type="button">Livre</button>
+              <button class="tool-button" data-tool="line" type="button">Linha</button>
+              <button class="tool-button" data-tool="rect" type="button">Retângulo</button>
+              <button class="tool-button" data-tool="circle" type="button">Círculo</button>
+              <button class="tool-button" data-tool="triangle" type="button">Triângulo</button>
+              <button class="tool-button" data-tool="star" type="button">Estrela</button>
+              <button class="tool-button" data-tool="eraser" type="button">Borracha</button>
+            </div>
+
+            <div class="tool-group">
+              <input id="colorInput" class="color-input" type="color" value="#151515" aria-label="Cor do traço">
+              <input id="sizeInput" class="size-input" type="range" min="2" max="28" value="4">
+              <button id="clearBoardButton" class="ghost-button" type="button">Limpar lousa</button>
+            </div>
+          </div>
+
+          <div id="wordChoicePanel" class="word-choice panel hidden"></div>
+
+          <div id="boardFrame" class="board-frame">
+            <canvas id="boardCanvas"></canvas>
+            <div id="boardOverlay" class="board-overlay">Aguardando início da partida</div>
+          </div>
+        </section>
+
+        <aside class="chat panel">
+          <div class="panel-head">
+            <div>
+              <p id="chatEyebrow" class="eyebrow">Palpites</p>
+              <h3 id="chatTitle">Chat da rodada</h3>
+            </div>
+          </div>
+
+          <div class="chat-tabs">
+            <button id="guessTabButton" class="chat-tab active" type="button">Palpites</button>
+            <button id="roomTabButton" class="chat-tab" type="button">Sala</button>
+          </div>
+
+          <div id="chatList" class="chat-list"></div>
+
+          <form id="guessForm" class="guess-form">
+            <input id="guessInput" type="text" maxlength="60" placeholder="Digite seu palpite">
+            <button class="primary-button" type="submit">Enviar</button>
+          </form>
+
+          <form id="roomChatForm" class="guess-form hidden">
+            <input id="roomChatInput" type="text" maxlength="220" placeholder="Escreva para a sala">
+            <button class="primary-button" type="submit">Enviar</button>
+          </form>
+        </aside>
+      </section>
+    </section>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
