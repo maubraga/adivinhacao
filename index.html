@@ -3,190 +3,276 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#0c1017">
-  <title>Arena Braga</title>
+  <meta name="theme-color" content="#08111f">
+  <title>Gestao de Gastos</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Syne:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/assets/branding/logo.png">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <main class="page">
-    <section id="landingScreen" class="landing-screen">
-      <div class="landing-screen__content">
-        <div class="landing-screen__media">
-          <img class="landing-screen__logo" src="/assets/landing/desenho-de-batalha-logo.png" alt="Desenho de Batalha">
-        </div>
-        <button id="enterPortalButton" class="primary-button primary-button--rect" type="button">Entrar</button>
-      </div>
-    </section>
-
-    <section id="welcomeScreen" class="welcome-screen">
-      <div class="hero-panel">
-        <p class="eyebrow">Portal da Arena</p>
-        <h1>Escolha <span>seu acesso</span></h1>
-
-        <form id="entryForm" class="entry-card">
-          <label class="field">
-            <span>Seu nome</span>
-            <input id="playerNameInput" type="text" maxlength="24" placeholder="Digite seu nome" required>
-          </label>
-
-          <div class="access-actions">
-            <button id="createRoomModeButton" class="primary-button primary-button--rect" type="button">Criar Sala</button>
-            <button id="showJoinPanelButton" class="ghost-button ghost-button--rect" type="button">Entrar em uma Sala</button>
+  <main class="app-shell">
+    <div class="app-device">
+      <section id="loginScreen" class="hero-card hero-card-compact">
+        <header class="setup-hero">
+          <div class="setup-hero__logo">
+            <img src="/assets/branding/logo.png" alt="Logo Gestao de Gastos">
           </div>
-
-          <div id="createModePanel" class="mode-panel hidden">
-            <p class="eyebrow">Modo da sala</p>
-            <div class="mode-panel__actions">
-              <button id="createSoloRoomButton" class="ghost-button ghost-button--rect" type="button">Criar X1</button>
-              <button id="createTeamRoomButton" class="primary-button primary-button--rect" type="button">Criar 2x2</button>
-            </div>
+          <div class="setup-hero__copy">
+            <h1>Acesso <span>seguro</span></h1>
+            <p>Entre para acessar sua base de projetos</p>
           </div>
+        </header>
 
-          <div id="joinPanel" class="join-row hidden">
-            <label class="field">
-              <span>Codigo da sala</span>
-              <input id="roomCodeInput" type="text" maxlength="5" placeholder="ABCDE">
+        <form id="loginForm" class="panel panel-setup">
+          <div class="setup-form">
+            <label class="field field-row">
+              <span class="field-row__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke="currentColor" stroke-width="1.8"/><path d="M4 20a8 8 0 0 1 16 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              </span>
+              <span class="field-row__body">
+                <span>Usuario</span>
+                <input id="loginUsername" name="loginUsername" type="text" autocomplete="username" placeholder="Digite seu usuario" required>
+              </span>
             </label>
-            <button id="joinRoomButton" class="ghost-button ghost-button--rect" type="button">Entrar</button>
+
+            <label class="field field-row">
+              <span class="field-row__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M7 11V8a5 5 0 1 1 10 0v3" stroke="currentColor" stroke-width="1.8"/><path d="M6 11h12v9H6z" stroke="currentColor" stroke-width="1.8"/></svg>
+              </span>
+              <span class="field-row__body">
+                <span>Senha</span>
+                <input id="loginPassword" name="loginPassword" type="password" autocomplete="current-password" placeholder="Digite sua senha" required>
+              </span>
+            </label>
+
+            <p id="loginFeedback" class="login-feedback hidden"></p>
+
+            <div class="action-row">
+              <button id="loginButton" class="primary-button primary-button--hero" type="submit">Entrar</button>
+            </div>
           </div>
         </form>
+      </section>
 
-        <section class="open-rooms">
-          <div class="open-rooms__head">
-            <div>
-              <p class="eyebrow">Salas abertas</p>
-              <h2>Entrar em uma sala existente</h2>
+      <div id="appContent" class="hidden">
+        <section class="hero-card hero-card-compact">
+          <header class="setup-hero">
+            <div class="setup-hero__logo">
+              <img src="/assets/branding/logo.png" alt="Logo Gestao de Gastos">
             </div>
-            <button id="refreshRoomsButton" class="ghost-button ghost-button--rect" type="button">Atualizar</button>
+            <div class="setup-hero__copy">
+              <h1>Abrir <span>projeto</span></h1>
+              <p>Selecione um projeto para continuar</p>
+            </div>
+            <div class="session-bar">
+              <span id="sessionUserLabel">Conta ativa</span>
+              <button id="logoutButton" class="ghost-button session-bar__button" type="button">Sair</button>
+            </div>
+          </header>
+
+          <form id="reportSetupForm" class="panel panel-setup">
+            <div class="setup-form">
+              <label class="field field-row">
+                <span class="field-row__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke="currentColor" stroke-width="1.8"/><path d="M4 20a8 8 0 0 1 16 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                </span>
+                <span class="field-row__body">
+                  <span>Nome do Usuario</span>
+                  <input id="userName" name="userName" type="text" maxlength="80" placeholder="Digite seu nome" required>
+                </span>
+              </label>
+
+              <label class="field field-row">
+                <span class="field-row__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M7 4h8l4 4v12H7z" stroke="currentColor" stroke-width="1.8"/><path d="M15 4v4h4M10 12h6M10 16h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                </span>
+                <span class="field-row__body">
+                  <span>Tipo do Relatorio</span>
+                  <select id="reportType" name="reportType" required>
+                    <option value="Reembolso">Reembolso</option>
+                    <option value="Prestacao de Contas">Prestacao de Contas</option>
+                    <option value="Km">Km</option>
+                  </select>
+                </span>
+              </label>
+
+              <label class="field field-row">
+                <span class="field-row__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M3 8h7l2 2h9v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+                </span>
+                <span class="field-row__body">
+                  <span>Nome do Projeto</span>
+                  <input id="projectName" name="projectName" type="text" maxlength="100" placeholder="Digite o projeto" required>
+                </span>
+              </label>
+
+              <div class="action-row setup-actions">
+                <button id="setupSubmitButton" class="primary-button primary-button--hero" type="button">Salvar projeto</button>
+                <button id="openProjectButton" class="ghost-button" type="button">Abrir projeto</button>
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <section id="workspace" class="workspace hidden" aria-live="polite">
+          <article id="adminPanel" class="panel panel-setup hidden">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Admin</p>
+                <h2>Usuarios do sistema</h2>
+              </div>
+            </div>
+
+            <form id="adminUserForm" class="setup-form">
+              <div class="grid-form">
+                <label class="field">
+                  <span>Novo usuario</span>
+                  <input id="adminNewUsername" name="adminNewUsername" type="text" maxlength="40" placeholder="Digite o usuario" required>
+                </label>
+
+                <label class="field">
+                  <span>Senha</span>
+                  <input id="adminNewPassword" name="adminNewPassword" type="text" maxlength="80" placeholder="Digite a senha" required>
+                </label>
+              </div>
+
+              <div class="action-row">
+                <button id="adminCreateUserButton" class="primary-button" type="submit">Adicionar usuario</button>
+              </div>
+            </form>
+
+            <p id="adminFeedback" class="login-feedback hidden"></p>
+
+            <div id="adminUsersList" class="saved-projects empty">
+              <p>Nenhum usuario cadastrado.</p>
+            </div>
+          </article>
+
+          <article class="panel saved-projects-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Projetos</p>
+                <h2>Projetos salvos</h2>
+              </div>
+            </div>
+            <div id="projectList" class="saved-projects empty">
+              <p>Nenhum projeto salvo.</p>
+            </div>
+          </article>
+
+          <div id="projectWorkspaceContent" class="project-workspace hidden">
+            <article class="panel summary-panel">
+              <div class="summary-chip">
+                <p class="summary-label">Usuario</p>
+                <h2 id="summaryUser">-</h2>
+              </div>
+              <div class="summary-chip">
+                <p class="summary-label">Projeto</p>
+                <h3 id="summaryProject">-</h3>
+              </div>
+              <div class="summary-chip">
+                <p class="summary-label">Relatorio</p>
+                <h3 id="summaryType">-</h3>
+              </div>
+              <button id="changeSetupButton" class="ghost-button" type="button">Alterar dados</button>
+            </article>
+
+            <form id="entryForm" class="panel entry-panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>Novo item</h2>
+                </div>
+              </div>
+
+              <div class="grid-form">
+                <label class="field">
+                  <span>Data</span>
+                  <input id="entryDate" name="entryDate" type="date" required>
+                </label>
+
+                <label class="field">
+                  <span>Centro de Custo</span>
+                  <select id="entryCostCenter" name="entryCostCenter" required>
+                    <option value="Operacao">Operacao</option>
+                    <option value="Implantacao">Implantacao</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>Descricao</span>
+                  <textarea id="entryDescription" name="entryDescription" rows="1" maxlength="300" placeholder="Detalhe da despesa ou trajeto" required></textarea>
+                </label>
+
+                <label class="field">
+                  <span>Valor</span>
+                  <input id="entryValue" name="entryValue" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0,00" required>
+                </label>
+
+                <label class="field field-readonly">
+                  <span>Categoria do relatorio</span>
+                  <input id="entryCategory" name="entryCategory" type="text" readonly>
+                </label>
+
+                <label class="field field-upload">
+                  <span>Comprovantes</span>
+                  <input id="entryReceipts" name="entryReceipts" type="file" accept="image/*,.pdf" capture="environment" multiple>
+                  <small>No celular, a camera traseira vira atalho para anexar comprovantes.</small>
+                </label>
+              </div>
+
+              <div class="action-row compact-row">
+                <button id="openCameraButton" class="ghost-button" type="button">Abrir camera</button>
+              </div>
+
+              <div id="receiptPreview" class="receipt-preview empty">
+                <p>Nenhum comprovante selecionado.</p>
+              </div>
+
+              <div class="action-row">
+                <button class="primary-button" type="submit">Adicionar item</button>
+                <button id="clearEntryButton" class="ghost-button" type="button">Limpar</button>
+              </div>
+            </form>
+
+            <section class="panel items-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Resumo</p>
+                  <h2>Itens do relatorio</h2>
+                </div>
+                <div class="totals">
+                  <span>Total</span>
+                  <strong id="totalValue">R$ 0,00</strong>
+                </div>
+              </div>
+
+              <div id="itemsList" class="items-list empty">
+                <p>Adicione pelo menos um item para liberar a exportacao.</p>
+              </div>
+
+              <div class="export-row">
+                <button id="downloadButton" class="primary-button" type="button" disabled>Baixar planilha XLSX</button>
+              </div>
+            </section>
           </div>
-          <div id="openRoomsList" class="open-rooms__list"></div>
         </section>
       </div>
-    </section>
-
-    <section id="gameScreen" class="game-screen hidden">
-      <header class="topbar panel">
-        <div class="topbar-room">
-          <p class="eyebrow">Sala</p>
-          <h2 id="roomCodeLabel">-----</h2>
-        </div>
-        <div class="topbar-strip">
-          <div class="status-pill topbar-chip">
-            <span id="phaseLabel">Lobby</span>
-          </div>
-          <div class="timer-pill topbar-chip">
-            <span id="timerLabel">00:00</span>
-          </div>
-          <label class="rounds-picker topbar-chip">
-            <span>Rodadas</span>
-            <select id="roundsSelect">
-              <option value="1">1</option>
-              <option value="2">2</option>
-              <option value="3" selected>3</option>
-              <option value="4">4</option>
-              <option value="5">5</option>
-            </select>
-          </label>
-          <button id="voiceToggleButton" class="ghost-button topbar-button" type="button">Entrar na voz</button>
-          <button id="muteToggleButton" class="ghost-button topbar-button" type="button" disabled>Mutar</button>
-          <button id="startGameButton" class="primary-button topbar-button topbar-button--start" type="button">Iniciar</button>
-          <button id="leaveRoomButton" class="ghost-button topbar-button" type="button">Sair</button>
-        </div>
-      </header>
-
-      <section class="layout">
-        <aside class="sidebar panel">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">Jogadores</p>
-            </div>
-            <span id="playerCountLabel" class="meta-badge">0/4</span>
-          </div>
-          <div id="playersList" class="players-list"></div>
-          <button id="resetTeamsButton" class="ghost-button sidebar-invite hidden" type="button">Refazer duplas</button>
-          <div class="score-rules">
-            <strong>Pontos por acerto</strong>
-            <p>Ate 1 min: 10 pts</p>
-            <p>1 a 5 min: 3 pts</p>
-            <p>5 a 10 min: 2 pts</p>
-            <p>Acima de 10 min: 1 pt</p>
-          </div>
-          <div id="teamPanel" class="team-panel"></div>
-        </aside>
-
-        <section class="board-section">
-          <div class="board-meta panel">
-            <div>
-              <p class="eyebrow">Rodada atual</p>
-              <h3 id="roundLabel">Lobby</h3>
-            </div>
-            <div class="word-card">
-              <p class="eyebrow">Palavra</p>
-              <strong id="wordLabel">Aguardando jogadores</strong>
-            </div>
-          </div>
-
-          <div class="toolbar panel">
-            <div class="tool-group" id="toolGroup">
-              <button class="tool-button active" data-tool="pen" type="button">Livre</button>
-              <button class="tool-button" data-tool="line" type="button">Linha</button>
-              <button class="tool-button" data-tool="rect" type="button">Retangulo</button>
-              <button class="tool-button" data-tool="circle" type="button">Circulo</button>
-              <button class="tool-button" data-tool="triangle" type="button">Triangulo</button>
-              <button class="tool-button" data-tool="star" type="button">Estrela</button>
-              <button class="tool-button" data-tool="eraser" type="button">Borracha</button>
-            </div>
-
-            <div class="tool-group tool-group--actions">
-              <input id="colorInput" class="color-input" type="color" value="#151515" aria-label="Cor do traco">
-              <input id="sizeInput" class="size-input" type="range" min="2" max="28" value="4">
-              <button id="clearBoardButton" class="ghost-button" type="button">Limpar lousa</button>
-            </div>
-          </div>
-
-          <div id="boardFrame" class="board-frame">
-            <canvas id="boardCanvas"></canvas>
-            <div id="wordChoicePanel" class="word-choice panel hidden"></div>
-            <div id="boardOverlay" class="board-overlay">Aguardando inicio da partida</div>
-          </div>
-        </section>
-
-        <aside class="chat panel">
-          <div class="panel-head">
-            <div>
-              <p id="chatEyebrow" class="eyebrow">Chat da sala</p>
-              <h3 id="chatTitle">Mensagens</h3>
-            </div>
-          </div>
-
-          <div class="chat-tabs">
-            <button id="guessTabButton" class="chat-tab active" type="button">Palpites</button>
-            <button id="roomTabButton" class="chat-tab" type="button">Sala</button>
-          </div>
-
-          <div id="chatList" class="chat-list"></div>
-          <div id="chatStatusNotice" class="chat-status-notice hidden"></div>
-
-          <form id="guessForm" class="guess-form">
-            <input id="guessInput" type="text" maxlength="60" placeholder="Escreva uma mensagem...">
-            <button class="primary-button" type="submit">Enviar</button>
-          </form>
-
-          <form id="roomChatForm" class="guess-form hidden">
-            <input id="roomChatInput" type="text" maxlength="220" placeholder="Escreva para a sala">
-            <button class="primary-button" type="submit">Enviar</button>
-          </form>
-        </aside>
-      </section>
-
-      <section class="game-highlights panel" aria-hidden="true">
-        <div class="octagon-grid"></div>
-      </section>
-    </section>
+    </div>
   </main>
+
+  <section id="cameraModal" class="camera-modal hidden" aria-hidden="true">
+    <div class="camera-card">
+      <video id="cameraVideo" autoplay playsinline muted></video>
+      <canvas id="cameraCanvas" class="hidden"></canvas>
+      <div class="camera-actions">
+        <button id="capturePhotoButton" class="primary-button" type="button">Tirar foto</button>
+        <button id="closeCameraButton" class="ghost-button" type="button">Fechar</button>
+      </div>
+    </div>
+  </section>
 
   <script type="module" src="/app.js"></script>
 </body>

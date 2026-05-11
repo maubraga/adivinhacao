@@ -1,1172 +1,1115 @@
-const session = {
-  playerId: sessionStorage.getItem("draw-battle-player-id") || "",
-  playerName: localStorage.getItem("draw-battle-player-name") || "",
-};
+import ExcelJS from "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/+esm";
+
+const AUTH_TOKEN_KEY = "gestao-gastos-auth-token";
+
+const currencyFormatter = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL",
+});
 
 const state = {
-  room: null,
-  publicRooms: [],
-  entryStage: "landing",
-  eventSource: null,
-  timerHandle: null,
-  roomsPollHandle: null,
-  activeTool: "pen",
-  color: "#151515",
-  size: 4,
-  pointerStrokeId: "",
-  pointerActive: false,
-  chatTab: "guess",
-  voiceJoined: false,
-  voiceMuted: false,
+  authToken: window.localStorage.getItem(AUTH_TOKEN_KEY) || "",
+  authUser: null,
+  userName: "",
+  reportType: "Reembolso",
+  projectName: "",
+  projectId: "",
+  isEditingSetup: false,
+  projects: [],
+  entries: [],
+  storage: null,
 };
 
-const voiceConnections = new Map();
-const voiceAudioElements = new Map();
-let localVoiceStream = null;
-const rtcConfig = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-};
+const loginScreen = document.querySelector("#loginScreen");
+const appContent = document.querySelector("#appContent");
+const loginForm = document.querySelector("#loginForm");
+const loginUsernameInput = document.querySelector("#loginUsername");
+const loginPasswordInput = document.querySelector("#loginPassword");
+const loginButton = document.querySelector("#loginButton");
+const loginFeedback = document.querySelector("#loginFeedback");
+const sessionUserLabel = document.querySelector("#sessionUserLabel");
+const logoutButton = document.querySelector("#logoutButton");
+const adminPanel = document.querySelector("#adminPanel");
+const adminUserForm = document.querySelector("#adminUserForm");
+const adminNewUsernameInput = document.querySelector("#adminNewUsername");
+const adminNewPasswordInput = document.querySelector("#adminNewPassword");
+const adminFeedback = document.querySelector("#adminFeedback");
+const adminUsersList = document.querySelector("#adminUsersList");
 
-const landingScreen = document.querySelector("#landingScreen");
-const welcomeScreen = document.querySelector("#welcomeScreen");
-const gameScreen = document.querySelector("#gameScreen");
-const enterPortalButton = document.querySelector("#enterPortalButton");
-const playerNameInput = document.querySelector("#playerNameInput");
-const roomCodeInput = document.querySelector("#roomCodeInput");
-const createRoomModeButton = document.querySelector("#createRoomModeButton");
-const createSoloRoomButton = document.querySelector("#createSoloRoomButton");
-const createTeamRoomButton = document.querySelector("#createTeamRoomButton");
-const showJoinPanelButton = document.querySelector("#showJoinPanelButton");
-const createModePanel = document.querySelector("#createModePanel");
-const joinPanel = document.querySelector("#joinPanel");
-const joinRoomButton = document.querySelector("#joinRoomButton");
-const refreshRoomsButton = document.querySelector("#refreshRoomsButton");
-const openRoomsList = document.querySelector("#openRoomsList");
-const roomCodeLabel = document.querySelector("#roomCodeLabel");
-const phaseLabel = document.querySelector("#phaseLabel");
-const timerLabel = document.querySelector("#timerLabel");
-const voiceToggleButton = document.querySelector("#voiceToggleButton");
-const muteToggleButton = document.querySelector("#muteToggleButton");
-const roundsSelect = document.querySelector("#roundsSelect");
-const startGameButton = document.querySelector("#startGameButton");
-const leaveRoomButton = document.querySelector("#leaveRoomButton");
-const resetTeamsButton = document.querySelector("#resetTeamsButton");
-const playerCountLabel = document.querySelector("#playerCountLabel");
-const teamPanel = document.querySelector("#teamPanel");
-const playersList = document.querySelector("#playersList");
-const roundLabel = document.querySelector("#roundLabel");
-const wordLabel = document.querySelector("#wordLabel");
-const wordChoicePanel = document.querySelector("#wordChoicePanel");
-const toolButtons = Array.from(document.querySelectorAll(".tool-button"));
-const colorInput = document.querySelector("#colorInput");
-const sizeInput = document.querySelector("#sizeInput");
-const clearBoardButton = document.querySelector("#clearBoardButton");
-const boardCanvas = document.querySelector("#boardCanvas");
-const boardFrame = document.querySelector("#boardFrame");
-const boardOverlay = document.querySelector("#boardOverlay");
-const chatList = document.querySelector("#chatList");
-const chatStatusNotice = document.querySelector("#chatStatusNotice");
-const chatEyebrow = document.querySelector("#chatEyebrow");
-const chatTitle = document.querySelector("#chatTitle");
-const guessTabButton = document.querySelector("#guessTabButton");
-const roomTabButton = document.querySelector("#roomTabButton");
-const guessForm = document.querySelector("#guessForm");
-const guessInput = document.querySelector("#guessInput");
-const roomChatForm = document.querySelector("#roomChatForm");
-const roomChatInput = document.querySelector("#roomChatInput");
+const reportSetupForm = document.querySelector("#reportSetupForm");
+const entryForm = document.querySelector("#entryForm");
+const workspace = document.querySelector("#workspace");
+const userNameInput = document.querySelector("#userName");
+const projectNameInput = document.querySelector("#projectName");
+const projectList = document.querySelector("#projectList");
+const reportTypeInput = document.querySelector("#reportType");
+const setupSubmitButton = document.querySelector("#setupSubmitButton");
+const openProjectButton = document.querySelector("#openProjectButton");
+const projectWorkspaceContent = document.querySelector("#projectWorkspaceContent");
+const entryCategoryInput = document.querySelector("#entryCategory");
+const receiptInput = document.querySelector("#entryReceipts");
+const receiptPreview = document.querySelector("#receiptPreview");
+const itemsList = document.querySelector("#itemsList");
+const totalValue = document.querySelector("#totalValue");
+const summaryUser = document.querySelector("#summaryUser");
+const summaryProject = document.querySelector("#summaryProject");
+const summaryType = document.querySelector("#summaryType");
+const clearEntryButton = document.querySelector("#clearEntryButton");
+const changeSetupButton = document.querySelector("#changeSetupButton");
+const downloadButton = document.querySelector("#downloadButton");
+const openCameraButton = document.querySelector("#openCameraButton");
+const closeCameraButton = document.querySelector("#closeCameraButton");
+const capturePhotoButton = document.querySelector("#capturePhotoButton");
+const cameraModal = document.querySelector("#cameraModal");
+const cameraVideo = document.querySelector("#cameraVideo");
+const cameraCanvas = document.querySelector("#cameraCanvas");
 
-const ctx = boardCanvas.getContext("2d");
-const resizeObserver = new ResizeObserver(() => renderBoard());
-resizeObserver.observe(boardFrame);
+let cameraStream = null;
 
-enterPortalButton.addEventListener("click", () => {
-  state.entryStage = "portal";
-  render();
-});
-createRoomModeButton.addEventListener("click", () => toggleCreateModePanel());
-createSoloRoomButton.addEventListener("click", () => createRoom("x1"));
-createTeamRoomButton.addEventListener("click", () => createRoom("2x2"));
-showJoinPanelButton.addEventListener("click", () => toggleJoinPanel());
-joinRoomButton.addEventListener("click", () => joinRoom());
-refreshRoomsButton.addEventListener("click", () => refreshPublicRooms(true));
-voiceToggleButton.addEventListener("click", toggleVoiceChannel);
-muteToggleButton.addEventListener("click", toggleMuteVoice);
-startGameButton.addEventListener("click", () => sendAction("start-game"));
-leaveRoomButton.addEventListener("click", leaveRoom);
-resetTeamsButton.addEventListener("click", () => sendAction("reset-teams"));
-roundsSelect.addEventListener("change", () => sendAction("set-rounds", { rounds: Number(roundsSelect.value) }));
-colorInput.addEventListener("input", () => {
-  state.color = colorInput.value;
-});
-sizeInput.addEventListener("input", () => {
-  state.size = Number(sizeInput.value);
-});
-clearBoardButton.addEventListener("click", () => sendAction("clear-board"));
-guessForm.addEventListener("submit", handleGuessSubmit);
-roomChatForm.addEventListener("submit", handleRoomChatSubmit);
-guessTabButton.addEventListener("click", () => switchChatTab("guess"));
-roomTabButton.addEventListener("click", () => switchChatTab("room"));
+loginForm.addEventListener("submit", handleLoginSubmit);
+logoutButton.addEventListener("click", handleLogout);
+adminUserForm.addEventListener("submit", handleAdminUserSubmit);
+reportTypeInput.addEventListener("change", syncCategoryField);
+receiptInput.addEventListener("change", renderReceiptPreview);
+reportSetupForm.addEventListener("submit", handleSetupSubmit);
+setupSubmitButton.addEventListener("click", handleSetupSubmit);
+openProjectButton.addEventListener("click", handleOpenProject);
+entryForm.addEventListener("submit", handleEntrySubmit);
+clearEntryButton.addEventListener("click", resetEntryForm);
+changeSetupButton.addEventListener("click", showSetup);
+downloadButton.addEventListener("click", handleDownload);
+openCameraButton.addEventListener("click", openCamera);
+closeCameraButton.addEventListener("click", closeCamera);
+capturePhotoButton.addEventListener("click", capturePhoto);
 
-toolButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    state.activeTool = button.dataset.tool;
-    toolButtons.forEach((item) => item.classList.toggle("active", item === button));
-  });
-});
+await init();
 
-boardCanvas.addEventListener("pointerdown", handlePointerDown);
-boardCanvas.addEventListener("pointermove", handlePointerMove);
-boardCanvas.addEventListener("pointerup", handlePointerUp);
-boardCanvas.addEventListener("pointerleave", handlePointerUp);
-boardCanvas.addEventListener("pointercancel", handlePointerUp);
+async function init() {
+  syncCategoryField();
+  syncSetupButtonLabel();
+  renderReceiptPreview();
+  renderEntries();
+  hideProjectWorkspace();
+  showLoginScreen();
+  await restoreSession();
+}
 
-window.addEventListener("beforeunload", () => {
-  if (!session.playerId) {
+async function restoreSession() {
+  if (!state.authToken) {
     return;
   }
-  navigator.sendBeacon(
-    "/api/rooms/leave",
-    new Blob([JSON.stringify({ playerId: session.playerId })], { type: "application/json" })
-  );
-});
 
-render();
-restoreSession();
-playerNameInput.value = session.playerName;
-startPublicRoomsPolling();
+  try {
+    const payload = await api("/api/session");
+    state.authUser = payload.user;
+    await bootAuthenticatedApp();
+  } catch {
+    clearSession();
+    showLoginScreen();
+  }
+}
 
-async function api(url, options = {}) {
-  const response = await fetch(url, {
-    method: options.method || "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
+async function handleLoginSubmit(event) {
+  event.preventDefault();
+
+  const username = loginUsernameInput.value.trim();
+  const password = loginPasswordInput.value;
+
+  if (!username || !password) {
+    return;
+  }
+
+  loginButton.disabled = true;
+  setLoginFeedback("");
+
+  try {
+    const payload = await api("/api/login", {
+      method: "POST",
+      body: { username, password },
+      skipAuth: true,
+    });
+
+    state.authToken = payload.token;
+    state.authUser = payload.user;
+    window.localStorage.setItem(AUTH_TOKEN_KEY, payload.token);
+    loginPasswordInput.value = "";
+    await bootAuthenticatedApp();
+  } catch (error) {
+    setLoginFeedback(error?.message || "Nao foi possivel entrar.");
+  } finally {
+    loginButton.disabled = false;
+  }
+}
+
+async function bootAuthenticatedApp() {
+  clearCurrentProjectState();
+  state.projects = [];
+  renderProjects();
+  state.storage = createRemoteStorage();
+  sessionUserLabel.textContent = `Conta ativa: ${state.authUser?.displayName || state.authUser?.username || "-"}`;
+  showAppScreen();
+  syncAdminPanel();
+  showWorkspaceList();
+  await refreshProjects();
+  if (state.authUser?.isAdmin) {
+    await refreshAdminUsers();
+  }
+}
+
+function handleLogout() {
+  clearSession();
+  clearCurrentProjectState();
+  state.projects = [];
+  renderProjects();
+  renderAdminUsers([]);
+  showLoginScreen();
+}
+
+function clearSession() {
+  state.authToken = "";
+  state.authUser = null;
+  state.storage = null;
+  window.localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+function setLoginFeedback(message) {
+  if (!message) {
+    loginFeedback.textContent = "";
+    loginFeedback.classList.add("hidden");
+    return;
+  }
+
+  loginFeedback.textContent = message;
+  loginFeedback.classList.remove("hidden");
+}
+
+function showLoginScreen() {
+  loginScreen.classList.remove("hidden");
+  appContent.classList.add("hidden");
+  loginUsernameInput.focus();
+}
+
+function showAppScreen() {
+  loginScreen.classList.add("hidden");
+  appContent.classList.remove("hidden");
+}
+
+function syncAdminPanel() {
+  if (state.authUser?.isAdmin) {
+    adminPanel.classList.remove("hidden");
+    return;
+  }
+
+  adminPanel.classList.add("hidden");
+}
+
+function createRemoteStorage() {
+  return {
+    async listProjects() {
+      const response = await api("/api/projects");
+      return Array.isArray(response.projects) ? response.projects.filter(isValidProjectRecord) : [];
     },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+    async getProject(projectId) {
+      const response = await api(`/api/projects/${encodeURIComponent(projectId)}`);
+      if (!isValidProjectRecord(response.project)) {
+        throw new Error("Projeto remoto invalido");
+      }
+      return response.project;
+    },
+    async saveProject(project) {
+      if (project.id) {
+        const response = await api(`/api/projects/${encodeURIComponent(project.id)}`, {
+          method: "PUT",
+          body: project,
+        });
+        if (!isValidProjectRecord(response.project)) {
+          throw new Error("Retorno invalido ao atualizar projeto");
+        }
+        return response.project;
+      }
 
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.error || "Falha na requisicao.");
-  }
-  return payload;
+      const response = await api("/api/projects", {
+        method: "POST",
+        body: project,
+      });
+      if (!isValidProjectRecord(response.project)) {
+        throw new Error("Retorno invalido ao criar projeto");
+      }
+      return response.project;
+    },
+    async deleteProject(projectId) {
+      await api(`/api/projects/${encodeURIComponent(projectId)}`, {
+        method: "DELETE",
+      });
+    },
+  };
 }
 
-function requireName() {
-  const value = playerNameInput.value.trim();
-  if (!value) {
-    playerNameInput.focus();
-    throw new Error("Informe seu nome.");
-  }
-  session.playerName = value;
-  localStorage.setItem("draw-battle-player-name", value);
-  return value;
-}
+async function handleSetupSubmit(event) {
+  event?.preventDefault?.();
 
-async function createRoom(mode = "2x2") {
-  try {
-    const playerName = requireName();
-    const payload = await api("/api/rooms/create", {
-      method: "POST",
-      body: { playerName, mode },
-    });
-    connectToRoom(payload.playerId, payload.room);
-  } catch (error) {
-    window.alert(error.message);
-  }
-}
+  const nextUserName = userNameInput.value.trim();
+  const nextProjectName = normalizeProjectName(projectNameInput.value);
+  const nextReportType = reportTypeInput.value;
 
-async function joinRoom() {
-  try {
-    const playerName = requireName();
-    const roomCode = roomCodeInput.value.trim().toUpperCase();
-    if (!roomCode) {
-      roomCodeInput.focus();
-      throw new Error("Informe o codigo da sala.");
-    }
-    const payload = await api("/api/rooms/join", {
-      method: "POST",
-      body: { playerName, roomCode },
-    });
-    connectToRoom(payload.playerId, payload.room);
-  } catch (error) {
-    window.alert(error.message);
-  }
-}
-
-function connectToRoom(playerId, room) {
-  session.playerId = playerId;
-  sessionStorage.setItem("draw-battle-player-id", playerId);
-  stopPublicRoomsPolling();
-  setRoom(room);
-  openEvents();
-}
-
-function openEvents() {
-  if (!session.playerId) {
+  if (!nextUserName) {
+    userNameInput.focus();
     return;
   }
-  state.eventSource?.close();
-  const events = new EventSource(`/api/events?playerId=${encodeURIComponent(session.playerId)}`);
-  events.onmessage = (event) => {
-    const payload = JSON.parse(event.data);
-    if (payload.type === "room-state") {
-      setRoom(payload.room);
+
+  if (!nextProjectName) {
+    projectNameInput.focus();
+    return;
+  }
+
+  try {
+    if (state.isEditingSetup && state.projectId) {
+      const renamedEntries = state.entries.map((entry) => ({
+        ...entry,
+        project: nextProjectName,
+        category: nextReportType,
+      }));
+
+      state.userName = nextUserName;
+      state.projectName = nextProjectName;
+      state.reportType = nextReportType;
+      state.entries = renamedEntries;
+
+      const project = await state.storage.saveProject({
+        id: state.projectId,
+        name: nextProjectName,
+        userName: nextUserName,
+        reportType: nextReportType,
+        entries: renamedEntries,
+      });
+
+      state.projectId = project.id;
+      state.isEditingSetup = false;
+      await refreshProjects();
+      renderCurrentProject();
+      syncSetupButtonLabel();
+      openProjectButton.classList.remove("hidden");
+      showWorkspaceList();
       return;
     }
-    if (payload.type === "voice-signal") {
-      handleVoiceSignal(payload);
-    }
-  };
-  events.onerror = async () => {
-    events.close();
-    state.eventSource = null;
-    try {
-      const payload = await api(`/api/state?playerId=${encodeURIComponent(session.playerId)}`);
-      setRoom(payload.room);
-      setTimeout(openEvents, 800);
-    } catch {
-      resetSession();
-    }
-  };
-  state.eventSource = events;
-}
 
-async function leaveRoom() {
-  await leaveVoiceChannel();
-  if (!session.playerId) {
-    resetSession();
-    return;
-  }
-  try {
-    await api("/api/rooms/leave", {
-      method: "POST",
-      body: { playerId: session.playerId },
+    const existingProject = findProjectByName(nextProjectName);
+    const currentEntries = existingProject
+      ? (await state.storage.getProject(existingProject.id)).entries || []
+      : [];
+
+    const project = await state.storage.saveProject({
+      id: existingProject?.id || "",
+      name: nextProjectName,
+      userName: nextUserName,
+      reportType: nextReportType,
+      entries: currentEntries,
     });
-  } catch {
-    // Ignore leave failures on manual exit.
-  }
-  resetSession();
-}
 
-function resetSession() {
-  state.eventSource?.close();
-  state.eventSource = null;
-  cleanupVoiceState();
-  session.playerId = "";
-  sessionStorage.removeItem("draw-battle-player-id");
-  state.room = null;
-  state.entryStage = "portal";
-  startPublicRoomsPolling();
-  render();
-}
+    state.userName = nextUserName;
+    state.projectId = project.id;
+    state.projectName = project.name;
+    state.reportType = project.reportType || nextReportType;
+    state.entries = Array.isArray(project.entries) ? project.entries : [];
+    state.isEditingSetup = false;
 
-function setRoom(room) {
-  state.room = room;
-  roundsSelect.value = String(room.rounds || 3);
-  render();
-  syncVoicePeers(room);
-}
-
-async function refreshPublicRooms(forceRender = false) {
-  if (session.playerId) {
-    return;
-  }
-
-  try {
-    const payload = await api("/api/rooms");
-    state.publicRooms = Array.isArray(payload.rooms) ? payload.rooms : [];
-    if (forceRender || !state.room) {
-      renderOpenRooms();
-    }
-  } catch {
-    state.publicRooms = [];
-    if (forceRender || !state.room) {
-      renderOpenRooms();
-    }
-  }
-}
-
-function startPublicRoomsPolling() {
-  clearInterval(state.roomsPollHandle);
-  refreshPublicRooms(true);
-  state.roomsPollHandle = setInterval(() => refreshPublicRooms(true), 5000);
-}
-
-function stopPublicRoomsPolling() {
-  clearInterval(state.roomsPollHandle);
-  state.roomsPollHandle = null;
-}
-
-async function sendAction(type, payload = {}) {
-  if (!session.playerId) {
-    return;
-  }
-  try {
-    await api("/api/action", {
-      method: "POST",
-      body: {
-        playerId: session.playerId,
-        type,
-        payload,
-      },
-    });
+    await refreshProjects();
+    renderProjects();
+    syncSetupButtonLabel();
+    userNameInput.value = project.userName || nextUserName;
+    projectNameInput.value = project.name;
+    reportTypeInput.value = project.reportType || nextReportType;
+    syncCategoryField();
+    showWorkspaceList();
   } catch (error) {
-    window.alert(error.message);
+    console.error(error);
+    window.alert(`Nao foi possivel salvar o projeto. ${error?.message || ""}`.trim());
   }
 }
 
-async function toggleVoiceChannel() {
-  if (state.voiceJoined) {
-    await leaveVoiceChannel();
+function handleOpenProject() {
+  showWorkspaceList();
+}
+
+async function handleEntrySubmit(event) {
+  event.preventDefault();
+
+  if (!state.projectId) {
+    window.alert("Selecione um projeto antes de adicionar itens.");
     return;
   }
+
+  const formData = new FormData(entryForm);
+  const value = Number(formData.get("entryValue") || 0);
+  const receipts = await filesToReceiptData(Array.from(receiptInput.files || []));
+  const entry = {
+    id: buildId(),
+    date: String(formData.get("entryDate") || ""),
+    project: state.projectName,
+    costCenter: String(formData.get("entryCostCenter") || "").trim(),
+    description: String(formData.get("entryDescription") || "").trim(),
+    value,
+    category: state.reportType,
+    receipts,
+  };
+
+  if (!entry.date || !entry.costCenter || !entry.description || value <= 0) {
+    return;
+  }
+
+  state.entries.unshift(entry);
 
   try {
-    localVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    state.voiceJoined = true;
-    state.voiceMuted = false;
-    await sendAction("voice-state", { enabled: true, muted: false });
-    render();
-    if (state.room) {
-      syncVoicePeers(state.room);
-    }
-  } catch {
-    window.alert("Nao foi possivel acessar o microfone.");
+    await persistCurrentProject();
+    renderEntries();
+    resetEntryForm();
+    await refreshProjects();
+  } catch (error) {
+    console.error(error);
+    window.alert("Nao foi possivel salvar o item no projeto.");
   }
 }
 
-async function leaveVoiceChannel() {
-  if (!state.voiceJoined) {
-    return;
-  }
-  if (localVoiceStream) {
-    localVoiceStream.getTracks().forEach((track) => track.stop());
-  }
-  localVoiceStream = null;
-  state.voiceJoined = false;
-  state.voiceMuted = false;
-  closeAllVoiceConnections();
-  await sendAction("voice-state", { enabled: false, muted: false });
-  render();
+function resetEntryForm() {
+  entryForm.reset();
+  syncCategoryField();
+  renderReceiptPreview();
 }
 
-async function toggleMuteVoice() {
-  if (!localVoiceStream) {
-    return;
-  }
-  state.voiceMuted = !state.voiceMuted;
-  localVoiceStream.getAudioTracks().forEach((track) => {
-    track.enabled = !state.voiceMuted;
-  });
-  await sendAction("voice-state", { enabled: true, muted: state.voiceMuted });
-  render();
+function showSetup() {
+  workspace.classList.add("hidden");
+  state.isEditingSetup = true;
+  syncSetupButtonLabel(true);
+  openProjectButton.classList.add("hidden");
+  reportSetupForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  userNameInput.focus();
 }
 
-function cleanupVoiceState() {
-  if (localVoiceStream) {
-    localVoiceStream.getTracks().forEach((track) => track.stop());
-  }
-  localVoiceStream = null;
-  state.voiceJoined = false;
-  state.voiceMuted = false;
-  closeAllVoiceConnections();
+function syncCategoryField() {
+  entryCategoryInput.value = reportTypeInput.value;
 }
 
-function closeAllVoiceConnections() {
-  for (const playerId of [...voiceConnections.keys()]) {
-    closeVoiceConnection(playerId);
-  }
+async function refreshProjects() {
+  state.projects = await state.storage.listProjects();
+  renderProjects();
 }
 
-function closeVoiceConnection(playerId) {
-  const connection = voiceConnections.get(playerId);
-  if (connection) {
-    connection.close();
-    voiceConnections.delete(playerId);
-  }
-  const audio = voiceAudioElements.get(playerId);
-  if (audio) {
-    audio.remove();
-    voiceAudioElements.delete(playerId);
-  }
-}
-
-function createVoiceConnection(remoteId) {
-  const connection = new RTCPeerConnection(rtcConfig);
-  if (localVoiceStream) {
-    localVoiceStream.getTracks().forEach((track) => {
-      connection.addTrack(track, localVoiceStream);
-    });
-  }
-
-  connection.onicecandidate = ({ candidate }) => {
-    if (candidate) {
-      sendAction("voice-signal", { targetId: remoteId, data: { candidate } });
-    }
-  };
-
-  connection.ontrack = (event) => {
-    let audio = voiceAudioElements.get(remoteId);
-    if (!audio) {
-      audio = document.createElement("audio");
-      audio.autoplay = true;
-      audio.playsInline = true;
-      audio.dataset.playerId = remoteId;
-      audio.className = "hidden";
-      document.body.appendChild(audio);
-      voiceAudioElements.set(remoteId, audio);
-    }
-    audio.srcObject = event.streams[0];
-  };
-
-  connection.onconnectionstatechange = () => {
-    if (["failed", "closed", "disconnected"].includes(connection.connectionState)) {
-      closeVoiceConnection(remoteId);
-    }
-  };
-
-  voiceConnections.set(remoteId, connection);
-  return connection;
-}
-
-function ensureVoiceConnection(remoteId) {
-  return voiceConnections.get(remoteId) || createVoiceConnection(remoteId);
-}
-
-async function syncVoicePeers(room) {
-  if (!state.voiceJoined || !room?.me) {
-    closeAllVoiceConnections();
+async function refreshAdminUsers() {
+  if (!state.authUser?.isAdmin) {
     return;
   }
 
-  const remoteVoicePlayers = room.players.filter((player) => player.id !== room.me.id && player.voiceEnabled);
-  const remoteIds = new Set(remoteVoicePlayers.map((player) => player.id));
-
-  for (const existingId of [...voiceConnections.keys()]) {
-    if (!remoteIds.has(existingId)) {
-      closeVoiceConnection(existingId);
-    }
-  }
-
-  for (const player of remoteVoicePlayers) {
-    const connection = ensureVoiceConnection(player.id);
-    if (room.me.id < player.id && connection.signalingState === "stable" && !connection.__offerStarted) {
-      connection.__offerStarted = true;
-      const offer = await connection.createOffer();
-      await connection.setLocalDescription(offer);
-      await sendAction("voice-signal", {
-        targetId: player.id,
-        data: { description: connection.localDescription },
-      });
-    }
-  }
+  const payload = await api("/api/admin/users");
+  renderAdminUsers(Array.isArray(payload.users) ? payload.users : []);
 }
 
-async function handleVoiceSignal(payload) {
-  if (!state.voiceJoined || !state.room?.me) {
-    return;
-  }
-  const remoteId = String(payload.fromId || "");
-  if (!remoteId) {
-    return;
-  }
-  const connection = ensureVoiceConnection(remoteId);
-  const signal = payload.data || {};
-
-  if (signal.description) {
-    await connection.setRemoteDescription(new RTCSessionDescription(signal.description));
-    if (signal.description.type === "offer") {
-      const answer = await connection.createAnswer();
-      await connection.setLocalDescription(answer);
-      await sendAction("voice-signal", {
-        targetId: remoteId,
-        data: { description: connection.localDescription },
-      });
-    }
+function renderAdminUsers(users) {
+  if (!users.length) {
+    adminUsersList.className = "saved-projects empty";
+    adminUsersList.innerHTML = "<p>Nenhum usuario cadastrado.</p>";
     return;
   }
 
-  if (signal.candidate) {
-    try {
-      await connection.addIceCandidate(new RTCIceCandidate(signal.candidate));
-    } catch {
-      // Ignore transient ICE ordering issues.
-    }
-  }
-}
-
-async function handleGuessSubmit(event) {
-  event.preventDefault();
-  const text = guessInput.value.trim();
-  if (!text) {
-    return;
-  }
-  guessInput.value = "";
-  await sendAction("guess", { text });
-}
-
-async function handleRoomChatSubmit(event) {
-  event.preventDefault();
-  const text = roomChatInput.value.trim();
-  if (!text) {
-    return;
-  }
-  roomChatInput.value = "";
-  await sendAction("room-message", { text });
-}
-
-function switchChatTab(tab) {
-  state.chatTab = tab;
-  guessTabButton.classList.toggle("active", tab === "guess");
-  roomTabButton.classList.toggle("active", tab === "room");
-  guessForm.classList.toggle("hidden", tab !== "guess");
-  roomChatForm.classList.toggle("hidden", tab !== "room");
-  chatEyebrow.textContent = tab === "guess" ? "Palpites" : "Sala";
-  chatTitle.textContent = tab === "guess" ? "Chat da rodada" : "Chat da sala";
-  if (state.room) {
-    renderChat(state.room);
-  }
-}
-
-function canDraw() {
-  return Boolean(
-    state.room &&
-      state.room.me &&
-      state.room.drawerId === state.room.me.id &&
-      state.room.phase === "playing"
-  );
-}
-
-function normalizePointer(event) {
-  const rect = boardCanvas.getBoundingClientRect();
-  return {
-    x: (event.clientX - rect.left) / rect.width,
-    y: (event.clientY - rect.top) / rect.height,
-  };
-}
-
-function pointerPayload(point) {
-  return {
-    id: state.pointerStrokeId,
-    tool: state.activeTool,
-    color: state.activeTool === "eraser" ? "#ffffff" : state.color,
-    size: Number(state.size),
-    x: point.x,
-    y: point.y,
-  };
-}
-
-function handlePointerDown(event) {
-  if (!canDraw()) {
-    return;
-  }
-  event.preventDefault();
-  state.pointerActive = true;
-  state.pointerStrokeId = crypto.randomUUID();
-  boardCanvas.setPointerCapture(event.pointerId);
-  sendAction("begin-stroke", pointerPayload(normalizePointer(event)));
-}
-
-function handlePointerMove(event) {
-  if (!state.pointerActive || !canDraw()) {
-    return;
-  }
-  sendAction("extend-stroke", pointerPayload(normalizePointer(event)));
-}
-
-function handlePointerUp(event) {
-  if (!state.pointerActive || !canDraw()) {
-    return;
-  }
-  state.pointerActive = false;
-  sendAction("end-stroke", pointerPayload(normalizePointer(event)));
-}
-
-function formatTime(ms) {
-  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
-  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
-  const seconds = String(totalSeconds % 60).padStart(2, "0");
-  return `${minutes}:${seconds}`;
-}
-
-function phaseText(room) {
-  const map = {
-    lobby: "Lobby",
-    choosing: "Escolhendo palavra",
-    playing: "Desenhando",
-    roundEnd: "Fim da rodada",
-    finished: "Partida encerrada",
-  };
-  return map[room.phase] || "Sala";
-}
-
-function render() {
-  const hasRoom = Boolean(state.room);
-  landingScreen.classList.toggle("hidden", hasRoom || state.entryStage !== "landing");
-  welcomeScreen.classList.toggle("hidden", hasRoom || state.entryStage !== "portal");
-  gameScreen.classList.toggle("hidden", !hasRoom);
-
-  if (!hasRoom) {
-    renderEntryPanels();
-    renderOpenRooms();
-    renderBoardEmpty();
-    return;
-  }
-
-  const room = state.room;
-  roomCodeLabel.textContent = room.roomCode;
-  phaseLabel.textContent = phaseText(room);
-  playerCountLabel.textContent = `${room.players.length}/${room.maxPlayers}`;
-  roundLabel.textContent =
-    room.phase === "lobby"
-      ? "Aguardando"
-      : `Rodada ${room.roundNumber}/${room.rounds} · ${room.drawerName || "-"}`;
-
-  renderTeamPanel(room);
-  renderPlayers(room);
-  renderWord(room);
-  renderChat(room);
-  renderWordChoices(room);
-  renderControls(room);
-  renderOverlay(room);
-  renderChatStatus(room);
-  renderBoard();
-  startCountdown();
-}
-
-function renderEntryPanels() {
-  const showJoin = !joinPanel.classList.contains("hidden");
-  const showMode = !createModePanel.classList.contains("hidden");
-  showJoinPanelButton.classList.toggle("active", showJoin);
-  createRoomModeButton.classList.toggle("active", showMode);
-}
-
-function toggleJoinPanel() {
-  joinPanel.classList.toggle("hidden");
-  createModePanel.classList.add("hidden");
-  renderEntryPanels();
-}
-
-function toggleCreateModePanel() {
-  createModePanel.classList.toggle("hidden");
-  joinPanel.classList.add("hidden");
-  renderEntryPanels();
-}
-
-function renderTeamPanel(room) {
-  if (!teamPanel) {
-    return;
-  }
-
-  const voiceCount = room.players.filter((player) => player.voiceEnabled).length;
-
-  if (room.mode !== "2x2") {
-    teamPanel.innerHTML = `
-      <strong>Modo X1</strong>
-      <p>Sala direta para 2 jogadores. Quem desenha depende do acerto rapido do outro para pontuar.</p>
-      <p>${voiceCount} jogador(es) na voz.</p>
-    `;
-    return;
-  }
-
-  const partnerName = room.me?.partnerName || "";
-  const invite = room.pendingInvite;
-  let description = "Fechem as duplas para liberar a partida 2x2.";
-
-  if (partnerName) {
-    description = `Seu par e ${partnerName}. Os pontos da rodada sao compartilhados pela dupla.`;
-  } else if (invite?.toId === room.me?.id) {
-    description = `${invite.fromName} quer formar dupla com voce.`;
-  } else if (invite?.fromId === room.me?.id) {
-    description = `Convite enviado para ${invite.toName}.`;
-  } else if (room.teamsReady) {
-    description = "As duas duplas estao prontas para comecar.";
-  }
-
-  teamPanel.innerHTML = `
-    <strong>Modo dupla 2x2</strong>
-    <p>${escapeHtml(description)}</p>
-    <p>${voiceCount} jogador(es) na voz.</p>
-  `;
-}
-
-function renderOpenRooms() {
-  if (!openRoomsList) {
-    return;
-  }
-
-  if (!state.publicRooms.length) {
-    openRoomsList.innerHTML = `<p class="open-rooms__empty">Nao existe sala no momento.</p>`;
-    return;
-  }
-
-  openRoomsList.innerHTML = state.publicRooms
-    .map((room) => `
-      <article class="room-card">
-        <div class="room-card__main">
-          <strong>${escapeHtml(room.roomCode)}</strong>
-          <p>${escapeHtml(room.hostName)} · ${room.mode === "x1" ? "X1" : "2x2"} · ${room.playerCount}/${room.maxPlayers} jogadores · ${room.phase === "lobby" ? "Lobby" : "Em jogo"}</p>
+  adminUsersList.className = "saved-projects";
+  adminUsersList.innerHTML = users
+    .map((user) => `
+      <article class="project-chip">
+        <div class="project-chip-name">
+          <span>${escapeHtml(user.username)}</span>
         </div>
-        <button class="primary-button room-card__button" type="button" data-room-code="${escapeHtml(room.roomCode)}">Entrar</button>
+        <div class="project-chip-actions">
+          <small class="project-chip-count">${user.isAdmin ? "admin" : "usuario"}</small>
+        </div>
+      </article>
+    `)
+    .join("");
+}
+
+async function handleAdminUserSubmit(event) {
+  event.preventDefault();
+
+  if (!state.authUser?.isAdmin) {
+    return;
+  }
+
+  const username = adminNewUsernameInput.value.trim().toLowerCase();
+  const password = adminNewPasswordInput.value.trim();
+
+  if (!username || !password) {
+    return;
+  }
+
+  setAdminFeedback("");
+
+  try {
+    await api("/api/admin/users", {
+      method: "POST",
+      body: { username, password },
+    });
+
+    adminUserForm.reset();
+    setAdminFeedback("Usuario criado com sucesso.", false);
+    await refreshAdminUsers();
+  } catch (error) {
+    setAdminFeedback(error?.message || "Nao foi possivel criar o usuario.", true);
+  }
+}
+
+function setAdminFeedback(message, isError = true) {
+  if (!message) {
+    adminFeedback.textContent = "";
+    adminFeedback.classList.add("hidden");
+    adminFeedback.classList.remove("login-feedback--success");
+    return;
+  }
+
+  adminFeedback.textContent = message;
+  adminFeedback.classList.remove("hidden");
+  adminFeedback.classList.toggle("login-feedback--success", !isError);
+}
+
+function renderProjects() {
+  if (!state.projects.length) {
+    projectList.className = "saved-projects empty";
+    projectList.innerHTML = "<p>Nenhum projeto salvo.</p>";
+    return;
+  }
+
+  projectList.className = "saved-projects";
+  projectList.innerHTML = state.projects
+    .map((project) => `
+      <article class="project-chip">
+        <button type="button" class="project-chip-name" data-open-project="${project.id}">
+          <span>${escapeHtml(project.name)}</span>
+        </button>
+        <div class="project-chip-actions">
+          <small class="project-chip-count">${project.entryCount || 0} itens</small>
+          <button type="button" class="project-chip-delete" data-delete-project="${project.id}">Excluir</button>
+        </div>
       </article>
     `)
     .join("");
 
-  openRoomsList.querySelectorAll("[data-room-code]").forEach((button) => {
-    button.addEventListener("click", () => {
-      roomCodeInput.value = button.dataset.roomCode || "";
-      joinRoom();
+  projectList.querySelectorAll("[data-open-project]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        await loadProjectIntoForm(button.dataset.openProject || "");
+      } catch (error) {
+        console.error(error);
+        window.alert("Nao foi possivel abrir esse projeto.");
+      }
     });
   });
-}
 
-function renderPlayers(room) {
-  const ranking = [...room.players].sort((a, b) => b.score - a.score);
-  playersList.innerHTML = ranking
-    .map((player, index) => {
-      const isMe = player.id === room.me?.id;
-      const sameTeam = Boolean(room.me?.teamId && player.teamId === room.me.teamId && !isMe);
-      const incomingInvite = room.pendingInvite?.toId === room.me?.id && room.pendingInvite?.fromId === player.id;
-      const outgoingInvite = room.pendingInvite?.fromId === room.me?.id && room.pendingInvite?.toId === player.id;
-      const canInvite =
-        room.mode === "2x2" &&
-        room.phase === "lobby" &&
-        room.players.length === 4 &&
-        !room.teamsReady &&
-        !room.pendingInvite &&
-        !room.me?.teamId &&
-        !player.teamId &&
-        !isMe;
+  projectList.querySelectorAll("[data-delete-project]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const projectId = button.dataset.deleteProject || "";
 
-      const badges = [
-        player.isHost ? "Host" : "",
-        player.isDrawer ? "Desenha" : "",
-        player.hasGuessed ? "Acertou" : "",
-        sameTeam ? "Seu par" : "",
-        player.voiceEnabled ? (player.voiceMuted ? "Voz mutada" : "Na voz") : "",
-        !player.connected ? "Offline" : "",
-      ]
-        .filter(Boolean)
-        .join(" · ");
+      try {
+        await state.storage.deleteProject(projectId);
 
-      const action = incomingInvite
-        ? `
-            <div class="player-card__actions">
-              <button class="primary-button player-card__action" type="button" data-player-action="accept-invite" data-player-id="${player.id}">Aceitar</button>
-              <button class="ghost-button player-card__action" type="button" data-player-action="decline-invite" data-player-id="${player.id}">Recusar</button>
-            </div>
-          `
-        : outgoingInvite
-          ? `<div class="player-card__hint">Convite enviado</div>`
-          : canInvite
-            ? `<button class="ghost-button player-card__action" type="button" data-player-action="invite" data-player-id="${player.id}">Chamar dupla</button>`
-            : "";
+        if (state.projectId === projectId) {
+          clearCurrentProjectState();
+        }
 
-      const initials = escapeHtml((player.name || "?").slice(0, 1).toUpperCase());
-
-      return `
-        <article class="player-card ${isMe ? "player-card--me" : ""}">
-          <div class="player-card__avatar">${initials}</div>
-          <div class="player-card__body">
-            <strong>${escapeHtml(player.name)}</strong>
-            <p>${badges || "Na disputa"}</p>
-            ${action}
-          </div>
-          <span class="player-card__score">${player.score} pts</span>
-        </article>
-      `;
-    })
-    .join("");
-
-  playersList.querySelectorAll("[data-player-action]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const playerId = button.dataset.playerId || "";
-      const action = button.dataset.playerAction || "";
-      if (action === "invite") {
-        sendAction("invite-partner", { targetId: playerId });
-      } else if (action === "accept-invite") {
-        sendAction("respond-partner-invite", { accept: true });
-      } else if (action === "decline-invite") {
-        sendAction("respond-partner-invite", { accept: false });
+        await refreshProjects();
+        renderEntries();
+      } catch (error) {
+        console.error(error);
+        window.alert("Nao foi possivel excluir o projeto.");
       }
     });
   });
 }
 
-function renderWord(room) {
-  if (room.phase === "choosing" && room.drawerId === room.me?.id) {
-    wordLabel.textContent = "Escolha uma palavra abaixo";
+async function loadProjectIntoForm(projectId) {
+  if (!projectId) {
     return;
   }
 
-  if (room.phase === "playing" && room.drawerId === room.me?.id) {
-    wordLabel.textContent = room.chosenWord || "Desenhe";
-    return;
-  }
+  const project = await state.storage.getProject(projectId);
 
-  if (room.phase === "playing") {
-    wordLabel.textContent = room.wordHint || "Adivinhe";
-    return;
-  }
+  state.projectId = project.id;
+  state.projectName = project.name;
+  state.userName = project.userName || "";
+  state.reportType = project.reportType || "Reembolso";
+  state.entries = Array.isArray(project.entries) ? project.entries : [];
+  state.isEditingSetup = false;
 
-  if (room.phase === "roundEnd" || room.phase === "finished") {
-    wordLabel.textContent = room.revealedWord || "Rodada encerrada";
-    return;
-  }
-
-  wordLabel.textContent = "Aguardando jogadores";
+  userNameInput.value = state.userName;
+  projectNameInput.value = state.projectName;
+  reportTypeInput.value = state.reportType;
+  syncCategoryField();
+  syncSetupButtonLabel();
+  openProjectButton.classList.remove("hidden");
+  renderCurrentProject();
+  showProjectWorkspace();
+  workspace.classList.remove("hidden");
+  workspace.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function renderWordChoices(room) {
-  const shouldShow = room.phase === "choosing" && room.drawerId === room.me?.id;
-  wordChoicePanel.classList.toggle("hidden", !shouldShow);
-  if (!shouldShow) {
-    wordChoicePanel.innerHTML = "";
+function renderCurrentProject() {
+  summaryUser.textContent = state.userName || "-";
+  summaryProject.textContent = state.projectName || "-";
+  summaryType.textContent = state.reportType || "-";
+  renderEntries();
+}
+
+function clearCurrentProjectState() {
+  state.userName = "";
+  state.reportType = "Reembolso";
+  state.projectName = "";
+  state.projectId = "";
+  state.isEditingSetup = false;
+  state.entries = [];
+  userNameInput.value = "";
+  projectNameInput.value = "";
+  reportTypeInput.value = "Reembolso";
+  syncCategoryField();
+  syncSetupButtonLabel();
+  openProjectButton.classList.remove("hidden");
+  hideProjectWorkspace();
+  workspace.classList.add("hidden");
+}
+
+function syncSetupButtonLabel(forceEdit = false) {
+  setupSubmitButton.textContent = (forceEdit || state.isEditingSetup) ? "Salvar alteracoes" : "Salvar projeto";
+}
+
+function showWorkspaceList() {
+  workspace.classList.remove("hidden");
+  hideProjectWorkspace();
+  workspace.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function showProjectWorkspace() {
+  projectWorkspaceContent.classList.remove("hidden");
+}
+
+function hideProjectWorkspace() {
+  projectWorkspaceContent.classList.add("hidden");
+}
+
+function renderReceiptPreview() {
+  clearPreviewUrls();
+
+  const files = Array.from(receiptInput.files || []);
+  if (!files.length) {
+    receiptPreview.className = "receipt-preview empty";
+    receiptPreview.innerHTML = "<p>Nenhum comprovante selecionado.</p>";
     return;
   }
 
-  wordChoicePanel.innerHTML = `
-    <div class="panel-head">
-      <div>
-        <p class="eyebrow">Sua vez</p>
-        <h3>Escolha a palavra</h3>
-      </div>
-    </div>
-    <div class="word-options">
-      ${room.wordOptions
-        .map(
-          (word) => `<button class="word-option" type="button" data-word="${escapeHtml(word)}">${escapeHtml(word)}</button>`
-        )
-        .join("")}
-    </div>
-  `;
-
-  wordChoicePanel.querySelectorAll(".word-option").forEach((button) => {
-    button.addEventListener("click", () => sendAction("choose-word", { word: button.dataset.word }));
-  });
+  receiptPreview.className = "receipt-preview";
+  receiptPreview.innerHTML = files.map(renderReceiptPreviewItem).join("");
 }
 
-function renderControls(room) {
-  const isHost = Boolean(room.me?.isHost);
-  const startAllowedPhase = room.phase === "lobby" || room.phase === "finished";
-  const canStart =
-    room.mode === "x1"
-      ? room.players.length === 2
-      : room.players.length === 4 && room.teamsReady;
-
-  roundsSelect.disabled = !isHost || room.phase !== "lobby";
-  startGameButton.disabled = !isHost || !startAllowedPhase || !canStart;
-  resetTeamsButton.classList.toggle(
-    "hidden",
-    !(room.mode === "2x2" && isHost && room.phase === "lobby" && room.players.length === 4)
-  );
-
-  const drawerActive = canDraw();
-  clearBoardButton.disabled = !drawerActive;
-  toolButtons.forEach((button) => {
-    button.disabled = !drawerActive;
-  });
-  colorInput.disabled = !drawerActive || state.activeTool === "eraser";
-  sizeInput.disabled = !drawerActive;
-
-  const meIsDrawer = room.drawerId === room.me?.id;
-  const alreadyGuessed = room.me?.hasGuessed;
-  const canGuess = room.phase === "playing" && !meIsDrawer && !alreadyGuessed;
-  const drawerPlayer = room.players.find((player) => player.id === room.drawerId);
-  const isDrawerPartner = Boolean(
-    room.phase === "playing" &&
-    drawerPlayer &&
-    room.me?.teamId &&
-    drawerPlayer.teamId === room.me.teamId &&
-    !meIsDrawer
-  );
-
-  guessInput.disabled = !canGuess;
-  guessInput.placeholder = meIsDrawer
-    ? "Voce esta desenhando"
-    : alreadyGuessed
-      ? "Voce ja acertou"
-      : room.phase === "playing"
-        ? isDrawerPartner
-          ? "Tente acertar o desenho do seu par"
-          : room.mode === "2x2"
-            ? "Voce pode acompanhar, mas so o par pontua"
-            : "Tente acertar antes do tempo acabar"
-        : "Aguardando rodada";
-
-  guessForm.querySelector("button").disabled = !canGuess;
-  roomChatInput.disabled = !room.me;
-  roomChatForm.querySelector("button").disabled = !room.me;
-  voiceToggleButton.textContent = state.voiceJoined ? "Sair da voz" : "Entrar na voz";
-  muteToggleButton.disabled = !state.voiceJoined;
-  muteToggleButton.textContent = state.voiceMuted ? "Abrir mic" : "Mutar";
-}
-
-function renderOverlay(room) {
-  const meIsDrawer = room.drawerId === room.me?.id;
-  let text = "";
-
-  if (room.phase === "lobby") {
-    text = room.mode === "x1"
-      ? "Aguardando 2 jogadores para iniciar"
-      : "Aguardando 4 jogadores e as duplas";
-  } else if (room.phase === "choosing") {
-    text = meIsDrawer ? "Escolha uma palavra para comecar" : `${room.drawerName} esta escolhendo a palavra`;
-  } else if (room.phase === "playing") {
-    text = meIsDrawer ? "" : `Adivinhe o desenho de ${room.drawerName}`;
-  } else if (room.phase === "roundEnd") {
-    text = `Palavra: ${room.revealedWord || "-"}`;
-  } else if (room.phase === "finished") {
-    text = "Partida encerrada. Inicie outra no lobby.";
-  }
-
-  boardOverlay.textContent = text;
-  boardOverlay.classList.toggle("hidden", !text);
-}
-
-function renderChat(room) {
-  const activeFeed = state.chatTab === "room" ? room.roomChat : room.roundChat;
-  const emptyText = state.chatTab === "room" ? "Nenhuma mensagem na sala." : "Nenhum palpite ainda.";
-  if (!activeFeed.length) {
-    chatList.innerHTML = `<p class="empty-chat">${emptyText}</p>`;
-    return;
-  }
-
-  chatList.innerHTML = activeFeed
-    .map((item) => {
-      const label = item.type === "system" ? "Sistema" : item.playerName || "Jogador";
-      const className =
-        item.type === "correct" ? "chat-item chat-item--correct" :
-        item.type === "system" ? "chat-item chat-item--system" :
-        item.type === "room" ? "chat-item chat-item--room" :
-        "chat-item";
-      const timeLabel = item.createdAt ? "Agora" : "";
-      const initials = escapeHtml(label.slice(0, 1).toUpperCase());
-
-      return `
-        <article class="${className}">
-          <div class="chat-item__head">
-            <div class="chat-item__identity">
-              <span class="chat-item__avatar">${initials}</span>
-              <strong>${escapeHtml(label)}</strong>
-            </div>
-            <span class="chat-item__time">${timeLabel}</span>
-          </div>
-          <p>${escapeHtml(item.text)}</p>
-        </article>
-      `;
-    })
-    .join("");
-
-  chatList.scrollTop = chatList.scrollHeight;
-}
-
-function renderChatStatus(room) {
-  if (!chatStatusNotice) {
-    return;
-  }
-
-  const meIsDrawer = room.drawerId === room.me?.id;
-  const shouldShow = room.phase === "playing" && meIsDrawer;
-  chatStatusNotice.classList.toggle("hidden", !shouldShow);
-
-  if (!shouldShow) {
-    chatStatusNotice.textContent = "";
-    return;
-  }
-
-  chatStatusNotice.innerHTML = `
-    <div class="chat-status-notice__eyebrow">Status da rodada</div>
-    <strong>Sua vez de desenhar</strong>
-    <p>Desenhe para o seu time acertar rapido.</p>
-  `;
-}
-
-function startCountdown() {
-  clearInterval(state.timerHandle);
-  if (!state.room) {
-    timerLabel.textContent = "00:00";
-    return;
-  }
-
-  const tick = () => {
-    timerLabel.textContent = formatTime(state.room.timeLeftMs || 0);
-    if (state.room.timeLeftMs > 0) {
-      state.room.timeLeftMs = Math.max(0, state.room.timeLeftMs - 250);
+function clearPreviewUrls() {
+  receiptPreview.querySelectorAll("[data-preview-url]").forEach((image) => {
+    const url = image.dataset.previewUrl || "";
+    if (url.startsWith("blob:")) {
+      URL.revokeObjectURL(url);
     }
+  });
+}
+
+function renderReceiptPreviewItem(file) {
+  const previewMarkup = file.type.startsWith("image/")
+    ? buildImagePreview(file)
+    : '<div class="receipt-thumb file">PDF</div>';
+
+  return `
+    <article class="receipt-item">
+      ${previewMarkup}
+      <div>
+        <p class="receipt-name">${escapeHtml(file.name)}</p>
+        <p class="receipt-meta">${formatFileSize(file.size)} | ${escapeHtml(file.type || "arquivo")}</p>
+      </div>
+    </article>
+  `;
+}
+
+function buildImagePreview(file) {
+  const previewUrl = URL.createObjectURL(file);
+  return `<div class="receipt-thumb"><img src="${previewUrl}" alt="" data-preview-url="${previewUrl}"></div>`;
+}
+
+function renderEntries() {
+  const total = state.entries.reduce((sum, entry) => sum + Number(entry.value || 0), 0);
+  totalValue.textContent = currencyFormatter.format(total);
+  downloadButton.disabled = state.entries.length === 0;
+
+  if (!state.entries.length) {
+    itemsList.className = "items-list empty";
+    itemsList.innerHTML = "<p>Adicione pelo menos um item para liberar a exportacao.</p>";
+    return;
+  }
+
+  itemsList.className = "items-list";
+  itemsList.innerHTML = state.entries.map(renderEntryCard).join("");
+
+  itemsList.querySelectorAll("[data-remove-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      state.entries = state.entries.filter((entry) => entry.id !== button.dataset.removeId);
+
+      try {
+        await persistCurrentProject();
+        renderEntries();
+        await refreshProjects();
+      } catch (error) {
+        console.error(error);
+        window.alert("Nao foi possivel remover o item.");
+      }
+    });
+  });
+}
+
+function renderEntryCard(entry) {
+  const receiptCount = Array.isArray(entry.receipts) ? entry.receipts.length : 0;
+  const receiptText = receiptCount === 1 ? "1 comprovante" : `${receiptCount} comprovantes`;
+
+  return `
+    <article class="item-card">
+      <div class="item-topline">
+        <p class="item-title">${escapeHtml(entry.project)}</p>
+        <span class="item-value">${currencyFormatter.format(Number(entry.value || 0))}</span>
+      </div>
+      <div class="item-meta">
+        <span>${formatDateDisplay(entry.date)}</span>
+        <span>${escapeHtml(entry.costCenter)}</span>
+      </div>
+      <p class="item-extra">${escapeHtml(entry.description)}</p>
+      <div class="item-footer">
+        <span class="item-meta">${escapeHtml(entry.category)} | ${receiptText}</span>
+        <button class="remove-button" type="button" data-remove-id="${entry.id}">Remover</button>
+      </div>
+    </article>
+  `;
+}
+
+async function persistCurrentProject() {
+  if (!state.projectId) {
+    return;
+  }
+
+  const project = await state.storage.saveProject({
+    id: state.projectId,
+    name: state.projectName,
+    userName: state.userName,
+    reportType: state.reportType,
+    entries: state.entries,
+  });
+
+  state.projectId = project.id;
+}
+
+async function handleDownload() {
+  if (!state.entries.length) {
+    return;
+  }
+
+  downloadButton.disabled = true;
+  downloadButton.textContent = "Gerando planilha...";
+
+  try {
+    const workbook = await loadWorkbookTemplate();
+    buildMainSheet(workbook);
+    removeUnusedSheets(workbook);
+    await buildReceiptsSheet(workbook);
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    await triggerDownload(buffer, buildFileName());
+  } catch (error) {
+    console.error(error);
+    window.alert("Nao foi possivel gerar a planilha.");
+  } finally {
+    downloadButton.disabled = false;
+    downloadButton.textContent = "Baixar planilha XLSX";
+  }
+}
+
+function buildMainSheet(workbook) {
+  if (state.reportType === "Km") {
+    buildKmSheet(workbook);
+    return;
+  }
+
+  const targetSheetName = state.reportType === "Reembolso" ? "Reembolso" : "Prestacao de Contas";
+  let sheet = getWorksheetByCandidates(workbook, [targetSheetName, "Prestação de Contas", "PrestaÃ§Ã£o de Contas"]);
+
+  if (!sheet) {
+    sheet = workbook.addWorksheet(targetSheetName);
+  }
+
+  sheet.name = targetSheetName;
+  clearSheetArea(sheet, 8, 5, 200);
+  sheet.getCell("A1").value = "Nome";
+  sheet.getCell("A2").value = state.userName;
+  clearSheetArea(sheet, 6, 5, 1);
+  sheet.getCell("A6").value = "Nome:";
+  sheet.getCell("B6").value = state.userName;
+  sheet.getCell("A7").value = "Data";
+  sheet.getCell("B7").value = "Projeto";
+  sheet.getCell("C7").value = "Centro de Custo";
+  sheet.getCell("D7").value = "Descricao";
+  sheet.getCell("E7").value = "Valor";
+
+  ["A6", "B6", "A7", "B7", "C7", "D7", "E7"].forEach((cellRef) => {
+    sheet.getCell(cellRef).alignment = { horizontal: "left", vertical: "middle" };
+  });
+
+  state.entries.forEach((entry, index) => {
+    const rowNumber = 8 + index;
+    sheet.getCell(`A${rowNumber}`).value = formatDateDisplay(entry.date);
+    sheet.getCell(`B${rowNumber}`).value = entry.project;
+    sheet.getCell(`C${rowNumber}`).value = entry.costCenter;
+    sheet.getCell(`D${rowNumber}`).value = entry.description;
+    sheet.getCell(`E${rowNumber}`).value = Number(entry.value || 0);
+    sheet.getCell(`E${rowNumber}`).numFmt = '"R$" #,##0.00';
+  });
+
+  const totalRowNumber = 8 + state.entries.length + 1;
+  const total = state.entries.reduce((sum, entry) => sum + Number(entry.value || 0), 0);
+  sheet.getCell(`D${totalRowNumber}`).value = "Total";
+  sheet.getCell(`D${totalRowNumber}`).font = { bold: true };
+  sheet.getCell(`E${totalRowNumber}`).value = total;
+  sheet.getCell(`E${totalRowNumber}`).numFmt = '"R$" #,##0.00';
+  sheet.getCell(`E${totalRowNumber}`).font = { bold: true };
+}
+
+function buildKmSheet(workbook) {
+  let sheet = getWorksheetByCandidates(workbook, ["Despesas"]);
+
+  if (!sheet) {
+    sheet = workbook.addWorksheet("Despesas");
+  }
+
+  sheet.name = "Despesas";
+  clearSheetArea(sheet, 7, 2, 240);
+  sheet.getCell("A1").value = "Nome";
+  sheet.getCell("A2").value = state.userName;
+
+  state.entries.forEach((entry, index) => {
+    const rowNumber = 7 + (index * 18);
+    sheet.getCell(`A${rowNumber}`).value = formatDateDisplay(entry.date);
+    sheet.getCell(`B${rowNumber}`).value = `${entry.project} - ${entry.description}`;
+  });
+}
+
+async function buildReceiptsSheet(workbook) {
+  const existing = getWorksheetByCandidates(workbook, ["Comprovantes"]);
+  if (existing) {
+    workbook.removeWorksheet(existing.id);
+  }
+
+  const sheet = workbook.addWorksheet("Comprovantes", {
+    views: [{ state: "frozen", ySplit: 1 }],
+  });
+
+  sheet.columns = [
+    { header: "Data", key: "date", width: 16 },
+    { header: "Descricao", key: "description", width: 34 },
+    { header: "Comprovante", key: "preview", width: 42 },
+  ];
+
+  sheet.getRow(1).font = { bold: true };
+
+  let rowIndex = 2;
+  for (const entry of state.entries) {
+    if (!entry.receipts.length) {
+      sheet.addRow({
+        date: formatDateDisplay(entry.date),
+        description: entry.description,
+        preview: "Sem comprovante",
+      });
+      rowIndex += 1;
+      continue;
+    }
+
+    for (const receipt of entry.receipts) {
+      const imageExtension = detectImageExtension(receipt);
+      sheet.addRow({
+        date: formatDateDisplay(entry.date),
+        description: entry.description,
+        preview: imageExtension ? "" : receipt.name,
+      });
+
+      const row = sheet.getRow(rowIndex);
+      row.height = 205;
+
+      if (imageExtension && receipt.dataUrl) {
+        const imageId = workbook.addImage({
+          base64: receipt.dataUrl,
+          extension: imageExtension,
+        });
+
+        sheet.addImage(imageId, {
+          tl: { col: 2.04, row: rowIndex - 0.88 },
+          ext: { width: 250, height: 250 },
+        });
+      }
+
+      rowIndex += 1;
+    }
+  }
+}
+
+async function loadWorkbookTemplate() {
+  const response = await fetch("/Modelos.xlsx", { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Template indisponivel: ${response.status}`);
+  }
+
+  const buffer = await response.arrayBuffer();
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  return workbook;
+}
+
+function getWorksheetByCandidates(workbook, names) {
+  return names
+    .map((name) => workbook.getWorksheet(name))
+    .find(Boolean) || null;
+}
+
+function clearSheetArea(sheet, startRow, columns, totalRows) {
+  for (let rowNumber = startRow; rowNumber < startRow + totalRows; rowNumber += 1) {
+    for (let column = 1; column <= columns; column += 1) {
+      sheet.getCell(rowNumber, column).value = null;
+    }
+  }
+}
+
+function removeUnusedSheets(workbook) {
+  const allowedSheetNames = new Set(["Comprovantes"]);
+  const mainSheetName = state.reportType === "Km"
+    ? "Despesas"
+    : state.reportType === "Reembolso"
+      ? "Reembolso"
+      : "Prestacao de Contas";
+
+  allowedSheetNames.add(mainSheetName);
+
+  workbook.worksheets
+    .filter((sheet) => !allowedSheetNames.has(sheet.name))
+    .forEach((sheet) => {
+      workbook.removeWorksheet(sheet.id);
+    });
+}
+
+async function openCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    receiptInput.click();
+    return;
+  }
+
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } },
+      audio: false,
+    });
+    cameraVideo.srcObject = cameraStream;
+    cameraModal.classList.remove("hidden");
+    cameraModal.setAttribute("aria-hidden", "false");
+  } catch (error) {
+    console.error(error);
+    receiptInput.click();
+  }
+}
+
+function closeCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((track) => track.stop());
+    cameraStream = null;
+  }
+
+  cameraVideo.srcObject = null;
+  cameraModal.classList.add("hidden");
+  cameraModal.setAttribute("aria-hidden", "true");
+}
+
+async function capturePhoto() {
+  if (!cameraStream) {
+    return;
+  }
+
+  const videoWidth = cameraVideo.videoWidth;
+  const videoHeight = cameraVideo.videoHeight;
+  if (!videoWidth || !videoHeight) {
+    return;
+  }
+
+  cameraCanvas.width = videoWidth;
+  cameraCanvas.height = videoHeight;
+  cameraCanvas.getContext("2d").drawImage(cameraVideo, 0, 0, videoWidth, videoHeight);
+
+  const blob = await new Promise((resolve) => {
+    cameraCanvas.toBlob(resolve, "image/jpeg", 0.9);
+  });
+
+  if (!blob) {
+    return;
+  }
+
+  const file = new File([blob], `comprovante-${Date.now()}.jpg`, { type: "image/jpeg" });
+  appendFilesToReceiptInput([file]);
+  renderReceiptPreview();
+  closeCamera();
+}
+
+async function triggerDownload(buffer, fileName) {
+  const blob = new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 1000);
+}
+
+function appendFilesToReceiptInput(files) {
+  const transfer = new DataTransfer();
+  Array.from(receiptInput.files || []).forEach((file) => transfer.items.add(file));
+  files.forEach((file) => transfer.items.add(file));
+  receiptInput.files = transfer.files;
+}
+
+async function filesToReceiptData(files) {
+  return Promise.all(files.map(async (file) => ({
+    name: file.name,
+    type: file.type || "arquivo",
+    size: file.size,
+    dataUrl: await fileToDataUrl(file),
+  })));
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function api(url, options = {}) {
+  const requestInit = {
+    method: options.method || "GET",
+    headers: {},
   };
 
-  tick();
-  state.timerHandle = setInterval(tick, 250);
+  if (!options.skipAuth && state.authToken) {
+    requestInit.headers.Authorization = `Bearer ${state.authToken}`;
+  }
+
+  if (options.body !== undefined) {
+    requestInit.headers["Content-Type"] = "application/json";
+    requestInit.body = JSON.stringify(options.body);
+  }
+
+  const response = await fetch(url, requestInit);
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.error || `Erro ${response.status}`);
+  }
+
+  return payload;
 }
 
-function renderBoardEmpty() {
-  const width = Math.max(320, Math.floor(boardFrame.clientWidth || 320));
-  const height = Math.max(320, Math.floor(boardFrame.clientHeight || 320));
-  boardCanvas.width = width;
-  boardCanvas.height = height;
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, width, height);
+function isValidProjectRecord(project) {
+  return Boolean(
+    project &&
+    typeof project === "object" &&
+    typeof project.id === "string" &&
+    project.id &&
+    typeof project.name === "string" &&
+    project.name,
+  );
 }
 
-function renderBoard() {
-  const rect = boardFrame.getBoundingClientRect();
-  const width = Math.max(320, Math.floor(rect.width));
-  const height = Math.max(320, Math.floor(rect.height));
-  const ratio = window.devicePixelRatio || 1;
-
-  boardCanvas.width = Math.floor(width * ratio);
-  boardCanvas.height = Math.floor(height * ratio);
-  boardCanvas.style.width = `${width}px`;
-  boardCanvas.style.height = `${height}px`;
-
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, width, height);
-
-  if (!state.room) {
-    return;
-  }
-
-  const strokes = [...state.room.strokes];
-  if (state.room.liveStroke) {
-    strokes.push(state.room.liveStroke);
-  }
-
-  strokes.forEach((stroke) => drawStroke(stroke, width, height));
+function normalizeProjectName(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function drawStroke(stroke, width, height) {
-  if (!stroke) {
-    return;
-  }
-
-  ctx.save();
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
-  ctx.strokeStyle = stroke.color || "#111111";
-  ctx.lineWidth = Number(stroke.size) || 4;
-
-  if (stroke.tool === "pen" || stroke.tool === "eraser") {
-    const points = stroke.points || [];
-    if (!points.length) {
-      ctx.restore();
-      return;
-    }
-    ctx.beginPath();
-    ctx.moveTo(points[0].x * width, points[0].y * height);
-    for (const point of points.slice(1)) {
-      ctx.lineTo(point.x * width, point.y * height);
-    }
-    ctx.stroke();
-    ctx.restore();
-    return;
-  }
-
-  const from = stroke.from || { x: 0, y: 0 };
-  const to = stroke.to || from;
-  const x1 = from.x * width;
-  const y1 = from.y * height;
-  const x2 = to.x * width;
-  const y2 = to.y * height;
-  const left = Math.min(x1, x2);
-  const top = Math.min(y1, y2);
-  const shapeWidth = Math.abs(x2 - x1);
-  const shapeHeight = Math.abs(y2 - y1);
-
-  if (stroke.tool === "line") {
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
-    ctx.restore();
-    return;
-  }
-
-  if (stroke.tool === "rect") {
-    ctx.strokeRect(left, top, shapeWidth, shapeHeight);
-    ctx.restore();
-    return;
-  }
-
-  if (stroke.tool === "circle") {
-    ctx.beginPath();
-    ctx.ellipse(
-      left + shapeWidth / 2,
-      top + shapeHeight / 2,
-      Math.max(shapeWidth / 2, 2),
-      Math.max(shapeHeight / 2, 2),
-      0,
-      0,
-      Math.PI * 2
-    );
-    ctx.stroke();
-    ctx.restore();
-    return;
-  }
-
-  const points =
-    stroke.tool === "triangle"
-      ? trianglePoints(left, top, shapeWidth, shapeHeight)
-      : starPoints(left, top, shapeWidth, shapeHeight);
-
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  for (const point of points.slice(1)) {
-    ctx.lineTo(point.x, point.y);
-  }
-  ctx.closePath();
-  ctx.stroke();
-  ctx.restore();
+function findProjectByName(projectName) {
+  const normalized = slugify(projectName);
+  return state.projects.find((project) => slugify(project.name) === normalized) || null;
 }
 
-function trianglePoints(left, top, width, height) {
-  return [
-    { x: left + width / 2, y: top },
-    { x: left + width, y: top + height },
-    { x: left, y: top + height },
-  ];
+function formatDateDisplay(value) {
+  const [year, month, day] = String(value || "").split("-");
+  return year && month && day ? `${day}/${month}/${year}` : "";
 }
 
-function starPoints(left, top, width, height) {
-  const cx = left + width / 2;
-  const cy = top + height / 2;
-  const outer = Math.max(Math.min(width, height) / 2, 4);
-  const inner = outer * 0.45;
-  const points = [];
-
-  for (let index = 0; index < 10; index += 1) {
-    const radius = index % 2 === 0 ? outer : inner;
-    const angle = -Math.PI / 2 + (Math.PI / 5) * index;
-    points.push({
-      x: cx + Math.cos(angle) * radius,
-      y: cy + Math.sin(angle) * radius,
-    });
+function formatFileSize(bytes) {
+  if (bytes < 1024) {
+    return `${bytes} B`;
   }
 
-  return points;
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function detectImageExtension(receipt) {
+  const type = String(receipt.type || "").toLowerCase();
+  const name = String(receipt.name || "").toLowerCase();
+
+  if (type.includes("png") || name.endsWith(".png")) {
+    return "png";
+  }
+
+  if (type.includes("jpeg") || type.includes("jpg") || name.endsWith(".jpg") || name.endsWith(".jpeg")) {
+    return "jpeg";
+  }
+
+  if (type.includes("gif") || name.endsWith(".gif")) {
+    return "gif";
+  }
+
+  return null;
+}
+
+function buildFileName() {
+  const safeUser = slugify(state.userName || "usuario");
+  const safeProject = slugify(state.projectName || "projeto");
+  const safeType = slugify(state.reportType || "relatorio");
+  return `gestao-de-gastos-${safeUser}-${safeProject}-${safeType}.xlsx`;
+}
+
+function slugify(value) {
+  return String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+}
+
+function buildId() {
+  if (typeof crypto?.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
 function escapeHtml(value) {
-  return String(value || "")
+  return String(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
-}
-
-async function restoreSession() {
-  if (!session.playerId) {
-    return;
-  }
-
-  try {
-    const payload = await api(`/api/state?playerId=${encodeURIComponent(session.playerId)}`);
-    setRoom(payload.room);
-    openEvents();
-  } catch {
-    resetSession();
-  }
 }

@@ -1,8 +1,8 @@
 {
-  "name": "draw-battle",
+  "name": "gestao-de-gastos-online",
   "version": "1.0.0",
   "private": true,
-  "description": "Jogo online de desenho e adivinhacao em tempo real",
+  "description": "App online mobile-first para gestao de gastos e relatorios",
   "scripts": {
     "start": "node server.js",
     "build": "node scripts/build-web.mjs",
@@ -15,6 +15,7 @@
     "@capacitor/core": "^7.4.2",
     "@capacitor/filesystem": "^7.1.4",
     "@capacitor/preferences": "^7.0.1",
-    "@capacitor/share": "^7.0.1"
+    "@capacitor/share": "^7.0.1",
+    "@supabase/supabase-js": "^2.105.4"
   }
 }

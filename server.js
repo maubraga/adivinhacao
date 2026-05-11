@@ -1,996 +1,622 @@
 const http = require("http");
 const fs = require("fs");
+const fsp = require("fs/promises");
 const path = require("path");
-const crypto = require("crypto");
+const { createClient } = require("@supabase/supabase-js");
 
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
-const DEFAULT_MAX_PLAYERS = 4;
-const ROUND_DURATION_MS = 12 * 60_000;
-const CHOOSE_DURATION_MS = 15_000;
-const TURN_GAP_MS = 4_000;
+const DATA_DIR = path.join(ROOT, "data");
+const USERS_DIR = path.join(DATA_DIR, "users");
+const LEGACY_PROJECTS_FILE = path.join(DATA_DIR, "projects.json");
+const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 
-const MIME_TYPES = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "application/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-  ".mp4": "video/mp4",
-};
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const USE_SUPABASE = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+const supabase = USE_SUPABASE
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+  : null;
 
-const WORD_BANK = [
-  "abacaxi", "aviao", "balao", "banana", "bicicleta", "borboleta", "cachorro", "cadeira",
-  "cafe", "caminhao", "castelo", "chuva", "computador", "coracao", "dinossauro", "elefante",
-  "escada", "espelho", "estrela", "foguete", "gato", "guitarra", "hamburguer", "helicoptero",
-  "ilha", "janela", "lampada", "livro", "lua", "martelo", "microfone", "montanha",
-  "navio", "oculos", "palhaco", "panela", "peixe", "piano", "pirata", "pizza",
-  "ponte", "rainha", "relampago", "sanduiche", "sapato", "sorvete", "tartaruga", "telefone",
-  "trator", "trem", "violao", "xadrez", "zebra"
+const DEFAULT_USERS = [
+  {
+    username: "maubraga",
+    password: "260781Mau@",
+    displayName: "maubraga",
+    role: "admin",
+  },
+  {
+    username: "felipe",
+    password: "bepass123",
+    displayName: "Felipe",
+    role: "user",
+  },
 ];
 
-const rooms = new Map();
-const playerToRoom = new Map();
-const eventStreams = new Map();
+const MIME_TYPES = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".manifest": "text/cache-manifest; charset=utf-8",
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
 
-function send(res, status, body, type = "text/plain; charset=utf-8") {
+function send(res, status, body, type = "text/plain; charset=utf-8", extraHeaders = {}) {
   res.writeHead(status, {
     "Content-Type": type,
-    "Cache-Control": "no-store",
+    ...extraHeaders,
   });
   res.end(body);
 }
 
 function sendJson(res, status, payload) {
-  send(res, status, JSON.stringify(payload), "application/json; charset=utf-8");
+  send(
+    res,
+    status,
+    JSON.stringify(payload),
+    "application/json; charset=utf-8",
+    { "Cache-Control": "no-store" },
+  );
 }
 
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => {
-      try {
-        const raw = Buffer.concat(chunks).toString("utf8");
-        resolve(raw ? JSON.parse(raw) : {});
-      } catch (error) {
-        reject(error);
-      }
-    });
-    req.on("error", reject);
-  });
-}
-
-function randomId(prefix) {
-  return `${prefix}_${crypto.randomBytes(6).toString("hex")}`;
-}
-
-function normalizeWord(value) {
+function slugify(value) {
   return String(value || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9]+/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
     .toLowerCase();
 }
 
-function cleanName(value, fallback) {
-  const name = String(value || "").trim().slice(0, 24);
-  return name || fallback;
+function normalizeProjectName(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function createPlayer(playerId, playerName, isHost = false) {
+function buildToken(username) {
+  return `gestao-gastos-token:${slugify(username)}`;
+}
+
+function sanitizeEntry(entry, fallbackProject, fallbackType) {
   return {
-    id: playerId,
-    name: cleanName(playerName, isHost ? "Host" : "Jogador"),
-    score: 0,
-    isHost,
-    connected: true,
-    teamId: null,
-    voiceEnabled: false,
-    voiceMuted: false,
+    id: String(entry?.id || `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`),
+    date: String(entry?.date || ""),
+    project: normalizeProjectName(entry?.project || fallbackProject || ""),
+    costCenter: String(entry?.costCenter || "").trim(),
+    description: String(entry?.description || "").trim(),
+    value: Number(entry?.value || 0),
+    category: String(entry?.category || fallbackType || "Reembolso").trim() || "Reembolso",
+    receipts: Array.isArray(entry?.receipts) ? entry.receipts.map((receipt) => ({
+      name: String(receipt?.name || "arquivo"),
+      type: String(receipt?.type || "arquivo"),
+      size: Number(receipt?.size || 0),
+      dataUrl: String(receipt?.dataUrl || ""),
+    })) : [],
   };
 }
 
-function makeRoomCode() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  do {
-    code = Array.from({ length: 5 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
-  } while (rooms.has(code));
-  return code;
+function sanitizeProjectRecord(project) {
+  const name = normalizeProjectName(project?.name || "");
+  const id = String(project?.id || slugify(name || "projeto"));
+  const userName = String(project?.userName || "").trim();
+  const reportType = String(project?.reportType || "Reembolso").trim() || "Reembolso";
+  const entries = Array.isArray(project?.entries)
+    ? project.entries.map((entry) => sanitizeEntry(entry, name, reportType))
+    : [];
+
+  return {
+    id,
+    name,
+    userName,
+    reportType,
+    entries,
+    updatedAt: project?.updatedAt || new Date().toISOString(),
+  };
 }
 
-function shuffle(values) {
-  const next = [...values];
-  for (let index = next.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1));
-    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
-  }
-  return next;
+function buildProjectSummary(project) {
+  return {
+    id: project.id,
+    name: project.name,
+    userName: project.userName,
+    reportType: project.reportType,
+    entryCount: Array.isArray(project.entries) ? project.entries.length : 0,
+    updatedAt: project.updatedAt || null,
+  };
 }
 
-function pickWordOptions() {
-  return shuffle(WORD_BANK).slice(0, 3);
+function isValidProject(project) {
+  return Boolean(
+    project &&
+    typeof project.id === "string" &&
+    project.id &&
+    typeof project.name === "string" &&
+    project.name,
+  );
 }
 
-function getRoomByPlayer(playerId) {
-  const roomCode = playerToRoom.get(playerId);
-  return roomCode ? rooms.get(roomCode) : null;
+function sanitizeUserRecord(user) {
+  return {
+    username: String(user?.username || "").trim().toLowerCase(),
+    password: String(user?.password || ""),
+    displayName: String(user?.displayName || user?.username || "").trim(),
+    role: user?.role === "admin" ? "admin" : "user",
+  };
 }
 
-function getPlayer(room, playerId) {
-  return room.players.find((player) => player.id === playerId) || null;
+function buildPublicUser(user) {
+  return {
+    username: user.username,
+    displayName: user.displayName,
+    role: user.role,
+    isAdmin: user.role === "admin",
+  };
 }
 
-function pushFeedEntry(feed, entry, limit = 80) {
-  feed.push(entry);
-  if (feed.length > limit) {
-    feed.splice(0, feed.length - limit);
-  }
-}
+async function ensureAccountsFile() {
+  await fsp.mkdir(DATA_DIR, { recursive: true });
 
-function systemMessage(room, text) {
-  pushFeedEntry(room.roomChat, {
-    id: randomId("msg"),
-    type: "system",
-    text,
-    createdAt: Date.now(),
-  });
-}
-
-function roundMessage(room, entry) {
-  pushFeedEntry(room.roundChat, {
-    id: randomId("msg"),
-    createdAt: Date.now(),
-    ...entry,
-  }, 60);
-}
-
-function computeGuessPoints(room) {
-  const elapsedMs = room.startedAt ? Date.now() - room.startedAt : ROUND_DURATION_MS;
-  const elapsedMinutes = elapsedMs / 60_000;
-
-  if (elapsedMinutes <= 1) {
-    return 10;
-  }
-  if (elapsedMinutes <= 5) {
-    return 3;
-  }
-  if (elapsedMinutes <= 10) {
-    return 2;
-  }
-  return 1;
-}
-
-function clearRoomTimer(room) {
-  if (room.timer) {
-    clearTimeout(room.timer);
-    room.timer = null;
+  try {
+    await fsp.access(ACCOUNTS_FILE, fs.constants.F_OK);
+  } catch {
+    await fsp.writeFile(ACCOUNTS_FILE, JSON.stringify({ users: DEFAULT_USERS }, null, 2));
   }
 }
 
-function getDrawer(room) {
-  return room.players.find((player) => player.id === room.drawerId) || null;
+async function readAccountsDbLocal() {
+  await ensureAccountsFile();
+
+  try {
+    const raw = await fsp.readFile(ACCOUNTS_FILE, "utf8");
+    const parsed = JSON.parse(raw || '{"users":[]}');
+    const users = Array.isArray(parsed.users) ? parsed.users : [];
+    return {
+      users: users.map(sanitizeUserRecord).filter((user) => user.username && user.password),
+    };
+  } catch {
+    return { users: DEFAULT_USERS.map(sanitizeUserRecord) };
+  }
 }
 
-function maskWord(word) {
-  return String(word || "")
-    .split("")
-    .map((char) => (char === " " ? " " : "_"))
-    .join(" ");
+async function writeAccountsDbLocal(db) {
+  await ensureAccountsFile();
+  await fsp.writeFile(ACCOUNTS_FILE, JSON.stringify(db, null, 2));
 }
 
-function getTeamMap(room) {
-  const teams = new Map();
-  for (const player of room.players) {
-    if (!player.teamId) {
-      continue;
+function getUserFilePath(username) {
+  return path.join(USERS_DIR, `${slugify(username)}.json`);
+}
+
+async function ensureUserProjectsFile(username) {
+  await fsp.mkdir(USERS_DIR, { recursive: true });
+  const userFile = getUserFilePath(username);
+
+  try {
+    await fsp.access(userFile, fs.constants.F_OK);
+    return userFile;
+  } catch {
+    let initialDb = { projects: [] };
+
+    if (slugify(username) === "felipe") {
+      try {
+        const legacyRaw = await fsp.readFile(LEGACY_PROJECTS_FILE, "utf8");
+        const legacyParsed = JSON.parse(legacyRaw || '{"projects":[]}');
+        if (Array.isArray(legacyParsed.projects)) {
+          initialDb.projects = legacyParsed.projects.map(sanitizeProjectRecord).filter(isValidProject);
+        }
+      } catch {
+        initialDb = { projects: [] };
+      }
     }
-    if (!teams.has(player.teamId)) {
-      teams.set(player.teamId, []);
+
+    await fsp.writeFile(userFile, JSON.stringify(initialDb, null, 2));
+    return userFile;
+  }
+}
+
+async function readProjectsDbLocal(username) {
+  const userFile = await ensureUserProjectsFile(username);
+
+  try {
+    const raw = await fsp.readFile(userFile, "utf8");
+    const parsed = JSON.parse(raw || '{"projects":[]}');
+    const projects = Array.isArray(parsed.projects) ? parsed.projects : [];
+
+    return {
+      projects: projects.map(sanitizeProjectRecord).filter(isValidProject),
+    };
+  } catch {
+    return { projects: [] };
+  }
+}
+
+async function writeProjectsDbLocal(username, db) {
+  const userFile = await ensureUserProjectsFile(username);
+  await fsp.writeFile(userFile, JSON.stringify(db, null, 2));
+}
+
+async function readAccountsDb() {
+  if (!USE_SUPABASE) {
+    return readAccountsDbLocal();
+  }
+
+  const { data, error } = await supabase
+    .from("users")
+    .select("username,password,display_name,role")
+    .order("username", { ascending: true });
+
+  if (error) {
+    throw new Error(`Falha ao ler usuarios no Supabase: ${error.message}`);
+  }
+
+  return {
+    users: (data || []).map((user) => sanitizeUserRecord({
+      username: user.username,
+      password: user.password,
+      displayName: user.display_name,
+      role: user.role,
+    })),
+  };
+}
+
+async function writeAccountsDb(db) {
+  if (!USE_SUPABASE) {
+    await writeAccountsDbLocal(db);
+    return;
+  }
+
+  const payload = db.users.map((user) => ({
+    username: user.username,
+    password: user.password,
+    display_name: user.displayName,
+    role: user.role,
+  }));
+
+  const { error: deleteError } = await supabase
+    .from("users")
+    .delete()
+    .neq("username", "");
+
+  if (deleteError) {
+    throw new Error(`Falha ao limpar usuarios no Supabase: ${deleteError.message}`);
+  }
+
+  if (payload.length) {
+    const { error: insertError } = await supabase
+      .from("users")
+      .insert(payload);
+
+    if (insertError) {
+      throw new Error(`Falha ao gravar usuarios no Supabase: ${insertError.message}`);
     }
-    teams.get(player.teamId).push(player);
   }
-  return teams;
 }
 
-function areTeamsReady(room) {
-  if (room.mode !== "2x2") {
-    return true;
+async function ensureUserProjectsFileRemote(username) {
+  if (!USE_SUPABASE) {
+    return;
   }
-  if (room.players.length !== 4) {
-    return false;
+
+  const db = await readProjectsDbRemote(username);
+  if (!Array.isArray(db.projects)) {
+    throw new Error("Falha ao preparar base remota do usuario.");
   }
-  const teams = getTeamMap(room);
-  return teams.size === 2 && [...teams.values()].every((members) => members.length === 2);
 }
 
-function getPartner(room, playerId) {
-  const player = getPlayer(room, playerId);
-  if (!player?.teamId) {
+async function readProjectsDbRemote(username) {
+  const { data, error } = await supabase
+    .from("projects")
+    .select("id,name,user_name,report_type,entries,updated_at")
+    .eq("owner_username", username)
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    throw new Error(`Falha ao ler projetos no Supabase: ${error.message}`);
+  }
+
+  return {
+    projects: (data || []).map((project) => sanitizeProjectRecord({
+      id: project.id,
+      name: project.name,
+      userName: project.user_name,
+      reportType: project.report_type,
+      entries: project.entries,
+      updatedAt: project.updated_at,
+    })),
+  };
+}
+
+async function writeProjectsDbRemote(username, db) {
+  const { error: deleteError } = await supabase
+    .from("projects")
+    .delete()
+    .eq("owner_username", username);
+
+  if (deleteError) {
+    throw new Error(`Falha ao limpar projetos no Supabase: ${deleteError.message}`);
+  }
+
+  const payload = db.projects.map((project) => ({
+    id: project.id,
+    owner_username: username,
+    name: project.name,
+    user_name: project.userName,
+    report_type: project.reportType,
+    entries: project.entries,
+    updated_at: project.updatedAt || new Date().toISOString(),
+  }));
+
+  if (payload.length) {
+    const { error: insertError } = await supabase
+      .from("projects")
+      .insert(payload);
+
+    if (insertError) {
+      throw new Error(`Falha ao gravar projetos no Supabase: ${insertError.message}`);
+    }
+  }
+}
+
+async function readProjectsDb(username) {
+  if (!USE_SUPABASE) {
+    return readProjectsDbLocal(username);
+  }
+
+  return readProjectsDbRemote(username);
+}
+
+async function writeProjectsDb(username, db) {
+  if (!USE_SUPABASE) {
+    await writeProjectsDbLocal(username, db);
+    return;
+  }
+
+  await writeProjectsDbRemote(username, db);
+}
+
+async function readBody(req) {
+  const chunks = [];
+
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+
+  const raw = Buffer.concat(chunks).toString("utf8");
+  if (!raw) {
+    return {};
+  }
+
+  return JSON.parse(raw);
+}
+
+function getBearerToken(req) {
+  const header = String(req.headers.authorization || "");
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : "";
+}
+
+async function getAuthenticatedUser(req) {
+  return findUserByToken(getBearerToken(req));
+}
+
+async function findUserByCredentials(username, password) {
+  const db = await readAccountsDb();
+  return db.users.find((user) => user.username === username && user.password === password) || null;
+}
+
+async function findUserByToken(token) {
+  if (!token) {
     return null;
   }
-  return room.players.find((item) => item.teamId === player.teamId && item.id !== playerId) || null;
+
+  const db = await readAccountsDb();
+  return db.users.find((user) => buildToken(user.username) === token) || null;
 }
 
-function clearPairing(room) {
-  room.pendingInvite = null;
-  for (const player of room.players) {
-    player.teamId = null;
-  }
-}
+async function handleAuthApi(req, res, url) {
+  if (req.method === "POST" && url.pathname === "/api/login") {
+    const body = await readBody(req);
+    const username = String(body.username || "").trim().toLowerCase();
+    const password = String(body.password || "");
+    const user = await findUserByCredentials(username, password);
 
-function assignTeamsFromAcceptedInvite(room, fromId, toId) {
-  const teamA = randomId("team");
-  const teamB = randomId("team");
-  const chosenPair = new Set([fromId, toId]);
-
-  for (const player of room.players) {
-    player.teamId = chosenPair.has(player.id) ? teamA : teamB;
-  }
-
-  room.pendingInvite = null;
-}
-
-function serializeRoom(room, viewerId) {
-  const me = getPlayer(room, viewerId);
-  const drawer = getDrawer(room);
-  const partner = me ? getPartner(room, viewerId) : null;
-  const now = Date.now();
-  const timeLeftMs = room.deadlineAt ? Math.max(0, room.deadlineAt - now) : 0;
-  const guessedIds = new Set(room.guessedPlayerIds);
-
-  return {
-    roomCode: room.code,
-    phase: room.phase,
-    mode: room.mode,
-    rounds: room.rounds,
-    roundNumber: room.roundNumber,
-    turnNumber: room.turnNumber,
-    me: me
-      ? {
-          id: me.id,
-          name: me.name,
-          isHost: me.isHost,
-          score: me.score,
-          hasGuessed: guessedIds.has(me.id),
-          teamId: me.teamId,
-          partnerId: partner?.id || null,
-          partnerName: partner?.name || "",
-          voiceEnabled: me.voiceEnabled,
-          voiceMuted: me.voiceMuted,
-        }
-      : null,
-    drawerId: room.drawerId,
-    drawerName: drawer ? drawer.name : "",
-    players: room.players.map((player) => ({
-      id: player.id,
-      name: player.name,
-      score: player.score,
-      isHost: player.isHost,
-      connected: player.connected,
-      hasGuessed: guessedIds.has(player.id),
-      isDrawer: player.id === room.drawerId,
-      teamId: player.teamId,
-      voiceEnabled: player.voiceEnabled,
-      voiceMuted: player.voiceMuted,
-    })),
-    strokes: room.strokes,
-    liveStroke: room.liveStroke,
-    roundChat: room.roundChat,
-    roomChat: room.roomChat,
-    timeLeftMs,
-    maxPlayers: room.maxPlayers,
-    teamsReady: areTeamsReady(room),
-    pendingInvite: room.pendingInvite
-      ? {
-          fromId: room.pendingInvite.fromId,
-          fromName: getPlayer(room, room.pendingInvite.fromId)?.name || "",
-          toId: room.pendingInvite.toId,
-          toName: getPlayer(room, room.pendingInvite.toId)?.name || "",
-        }
-      : null,
-    wordHint: room.word && viewerId !== room.drawerId && room.phase === "playing" ? maskWord(room.word) : "",
-    revealedWord: room.phase === "finished" || room.phase === "roundEnd" ? room.word || "" : "",
-    chosenWord: viewerId === room.drawerId ? room.word || "" : "",
-    wordOptions: viewerId === room.drawerId && room.phase === "choosing" ? room.wordOptions : [],
-  };
-}
-
-function serializePublicRoom(room) {
-  return {
-    roomCode: room.code,
-    phase: room.phase,
-    mode: room.mode,
-    rounds: room.rounds,
-    roundNumber: room.roundNumber,
-    playerCount: room.players.length,
-    maxPlayers: room.maxPlayers,
-    hostName: room.players[0]?.name || "Host",
-    players: room.players.map((player) => ({
-      id: player.id,
-      name: player.name,
-      score: player.score,
-      isHost: player.isHost,
-    })),
-  };
-}
-
-function sendEventToPlayer(playerId, payload) {
-  const listeners = eventStreams.get(playerId);
-  if (!listeners || !listeners.size) {
-    return;
-  }
-
-  const packet = `data: ${JSON.stringify(payload)}\n\n`;
-  for (const res of listeners) {
-    res.write(packet);
-  }
-}
-
-function pushRoomState(room) {
-  for (const player of room.players) {
-    const listeners = eventStreams.get(player.id);
-    if (!listeners || !listeners.size) {
-      continue;
+    if (!user) {
+      sendJson(res, 401, { error: "Usuario ou senha invalidos." });
+      return true;
     }
 
-    const payload = `data: ${JSON.stringify({ type: "room-state", room: serializeRoom(room, player.id) })}\n\n`;
-    for (const res of listeners) {
-      res.write(payload);
+    if (USE_SUPABASE) {
+      await ensureUserProjectsFileRemote(user.username);
+    } else {
+      await ensureUserProjectsFile(user.username);
     }
-  }
-}
 
-function endGame(room, message) {
-  clearRoomTimer(room);
-  room.phase = "finished";
-  room.startedAt = null;
-  room.deadlineAt = null;
-  room.wordOptions = [];
-  room.liveStroke = null;
-  if (message) {
-    systemMessage(room, message);
-  }
-  pushRoomState(room);
-}
-
-function scheduleNextTurn(room, reasonText) {
-  clearRoomTimer(room);
-  room.phase = "roundEnd";
-  room.startedAt = null;
-  room.deadlineAt = Date.now() + TURN_GAP_MS;
-  room.liveStroke = null;
-  if (reasonText) {
-    systemMessage(room, reasonText);
-  }
-  pushRoomState(room);
-  room.timer = setTimeout(() => beginTurn(room), TURN_GAP_MS);
-}
-
-function finishTurn(room, reason = "time") {
-  if (!room || (room.phase !== "playing" && room.phase !== "choosing")) {
-    return;
+    sendJson(res, 200, {
+      token: buildToken(user.username),
+      user: buildPublicUser(user),
+      storageMode: USE_SUPABASE ? "supabase" : "arquivo-local",
+    });
+    return true;
   }
 
-  clearRoomTimer(room);
+  if (req.method === "GET" && url.pathname === "/api/session") {
+    const user = await getAuthenticatedUser(req);
 
-  const messages = {
-    time: `Tempo encerrado. A palavra era "${room.word || "-"}".`,
-    guessed: `A palavra foi descoberta. A palavra era "${room.word || "-"}".`,
-    drawerLeft: `O desenhista saiu. A rodada foi encerrada.`,
-  };
+    if (!user) {
+      sendJson(res, 401, { error: "Sessao invalida." });
+      return true;
+    }
 
-  scheduleNextTurn(room, messages[reason] || messages.time);
+    sendJson(res, 200, {
+      user: buildPublicUser(user),
+      storageMode: USE_SUPABASE ? "supabase" : "arquivo-local",
+    });
+    return true;
+  }
+
+  return false;
 }
 
-function startPlaying(room, chosenWord) {
-  room.word = chosenWord;
-  room.phase = "playing";
-  room.startedAt = Date.now();
-  room.deadlineAt = Date.now() + ROUND_DURATION_MS;
-  room.roundChat = [];
-  room.guessedPlayerIds = [];
-  room.strokes = [];
-  room.liveStroke = null;
-  roundMessage(room, {
-    type: "system",
-    text: `${getDrawer(room)?.name || "Desenhista"} começou a desenhar.`,
+async function handleConfigApi(req, res) {
+  if (req.method !== "GET") {
+    return false;
+  }
+
+  sendJson(res, 200, {
+    storageMode: USE_SUPABASE ? "supabase" : "arquivo-local",
+    usesSupabase: USE_SUPABASE,
   });
-  systemMessage(room, `${getDrawer(room)?.name || "Desenhista"} começou a desenhar.`);
-  pushRoomState(room);
-  clearRoomTimer(room);
-  room.timer = setTimeout(() => finishTurn(room, "time"), ROUND_DURATION_MS);
+  return true;
 }
 
-function beginTurn(room) {
-  clearRoomTimer(room);
-
-  const minimumPlayers = room.mode === "x1" ? 2 : 4;
-  if (room.players.length < minimumPlayers || !areTeamsReady(room)) {
-    room.phase = "lobby";
-    room.drawerId = null;
-    room.startedAt = null;
-    room.deadlineAt = null;
-    room.word = "";
-    room.wordOptions = [];
-    room.strokes = [];
-    room.liveStroke = null;
-    systemMessage(
-      room,
-      room.mode === "x1"
-        ? "Aguardando 2 jogadores para iniciar."
-        : "Aguardando 4 jogadores com as duplas fechadas."
-    );
-    pushRoomState(room);
-    return;
+async function handleAdminUsersApi(req, res, user) {
+  if (user.role !== "admin") {
+    sendJson(res, 403, { error: "Acesso restrito ao administrador." });
+    return true;
   }
 
-  const totalTurns = room.rounds * room.players.length;
-  if (room.turnNumber >= totalTurns) {
-    endGame(room, "Partida encerrada.");
-    return;
-  }
-
-  const drawerIndex = room.turnNumber % room.players.length;
-  room.roundNumber = Math.floor(room.turnNumber / room.players.length) + 1;
-  room.drawerId = room.players[drawerIndex].id;
-  room.turnNumber += 1;
-  room.phase = "choosing";
-  room.word = "";
-  room.wordOptions = pickWordOptions();
-  room.startedAt = null;
-  room.deadlineAt = Date.now() + CHOOSE_DURATION_MS;
-  room.strokes = [];
-  room.liveStroke = null;
-  room.guessedPlayerIds = [];
-  room.roundChat = [];
-  systemMessage(room, `Rodada ${room.roundNumber}: ${room.players[drawerIndex].name} escolhe a palavra.`);
-  pushRoomState(room);
-
-  room.timer = setTimeout(() => {
-    startPlaying(room, room.wordOptions[0]);
-  }, CHOOSE_DURATION_MS);
-}
-
-function createRoom(playerName, mode = "2x2") {
-  const normalizedMode = mode === "x1" ? "x1" : "2x2";
-  const roomCode = makeRoomCode();
-  const playerId = randomId("player");
-  const room = {
-    code: roomCode,
-    mode: normalizedMode,
-    maxPlayers: normalizedMode === "x1" ? 2 : DEFAULT_MAX_PLAYERS,
-    phase: "lobby",
-    rounds: 3,
-    roundNumber: 0,
-    turnNumber: 0,
-    drawerId: null,
-    word: "",
-    wordOptions: [],
-    deadlineAt: null,
-    strokes: [],
-    liveStroke: null,
-    guessedPlayerIds: [],
-    roundChat: [],
-    roomChat: [],
-    pendingInvite: null,
-    timer: null,
-    players: [createPlayer(playerId, playerName, true)],
-  };
-
-  rooms.set(roomCode, room);
-  playerToRoom.set(playerId, roomCode);
-  systemMessage(room, `${room.players[0].name} criou a sala.`);
-  return { room, playerId };
-}
-
-function joinRoom(roomCode, playerName) {
-  const room = rooms.get(String(roomCode || "").trim().toUpperCase());
-  if (!room) {
-    throw new Error("Sala não encontrada.");
-  }
-  if (room.players.length >= room.maxPlayers) {
-    throw new Error("A sala já está cheia.");
-  }
-
-  const playerId = randomId("player");
-  const player = createPlayer(playerId, playerName, false);
-
-  room.players.push(player);
-  playerToRoom.set(playerId, room.code);
-  systemMessage(room, `${player.name} entrou na sala.`);
-  pushRoomState(room);
-  return { room, playerId };
-}
-
-function closeRoomIfEmpty(room) {
-  if (room.players.length === 0) {
-    clearRoomTimer(room);
-    rooms.delete(room.code);
-  }
-}
-
-function leaveRoom(playerId) {
-  const room = getRoomByPlayer(playerId);
-  if (!room) {
-    return;
-  }
-
-  const player = getPlayer(room, playerId);
-  room.players = room.players.filter((item) => item.id !== playerId);
-  room.guessedPlayerIds = room.guessedPlayerIds.filter((id) => id !== playerId);
-  if (room.pendingInvite && (room.pendingInvite.fromId === playerId || room.pendingInvite.toId === playerId)) {
-    room.pendingInvite = null;
-  }
-  if (player?.teamId) {
-    clearPairing(room);
-  }
-  playerToRoom.delete(playerId);
-  eventStreams.delete(playerId);
-
-  if (player?.isHost && room.players[0]) {
-    room.players[0].isHost = true;
-  }
-
-  if (player) {
-    systemMessage(room, `${player.name} saiu da sala.`);
-  }
-
-  if (room.drawerId === playerId) {
-    room.drawerId = null;
-    if (room.players.length >= 2 && (room.phase === "playing" || room.phase === "choosing")) {
-      finishTurn(room, "drawerLeft");
-      return;
-    }
-  }
-
-  if (room.players.length < (room.mode === "x1" ? 2 : 4) && room.phase !== "lobby" && room.phase !== "finished") {
-    clearRoomTimer(room);
-    room.phase = "lobby";
-    room.turnNumber = 0;
-    room.roundNumber = 0;
-    room.word = "";
-    room.wordOptions = [];
-    room.startedAt = null;
-    room.deadlineAt = null;
-    room.strokes = [];
-    room.liveStroke = null;
-    if (room.mode === "2x2") {
-      clearPairing(room);
-    }
-    systemMessage(room, "Partida interrompida por falta de jogadores.");
-  }
-
-  closeRoomIfEmpty(room);
-  if (rooms.has(room.code)) {
-    pushRoomState(room);
-  }
-}
-
-function validateDrawerAction(room, playerId) {
-  if (room.drawerId !== playerId || room.phase !== "playing") {
-    throw new Error("Apenas o desenhista pode usar a lousa agora.");
-  }
-}
-
-function clampPoint(value) {
-  return Math.max(0, Math.min(1, Number(value) || 0));
-}
-
-function sanitizeStrokeBase(payload) {
-  return {
-    id: String(payload.id || randomId("stroke")),
-    tool: String(payload.tool || "pen"),
-    color: String(payload.color || "#111111").slice(0, 12),
-    size: Math.max(2, Math.min(48, Number(payload.size) || 4)),
-  };
-}
-
-function handleAction(playerId, type, payload) {
-  const room = getRoomByPlayer(playerId);
-  if (!room) {
-    throw new Error("Jogador sem sala ativa.");
-  }
-
-  const player = getPlayer(room, playerId);
-  if (!player) {
-    throw new Error("Jogador não encontrado.");
-  }
-
-  if (type === "set-rounds") {
-    if (!player.isHost || room.phase !== "lobby") {
-      throw new Error("Só o host pode ajustar as rodadas no lobby.");
-    }
-    room.rounds = Math.max(1, Math.min(5, Number(payload.rounds) || 3));
-    pushRoomState(room);
-    return;
-  }
-
-  if (type === "start-game") {
-    if (!player.isHost) {
-      throw new Error("Só o host pode iniciar.");
-    }
-    if (room.mode === "x1" && room.players.length !== 2) {
-      throw new Error("O modo x1 precisa de 2 jogadores.");
-    }
-    if (room.mode === "2x2" && room.players.length !== 4) {
-      throw new Error("O modo em dupla precisa de 4 jogadores.");
-    }
-    if (room.mode === "2x2" && !areTeamsReady(room)) {
-      throw new Error("Formem as duas duplas antes de iniciar.");
-    }
-    room.players.forEach((item) => {
-      item.score = 0;
-    });
-    room.turnNumber = 0;
-    room.roundNumber = 0;
-    room.roundChat = [];
-    room.strokes = [];
-    room.liveStroke = null;
-    systemMessage(room, `${player.name} iniciou uma nova partida.`);
-    beginTurn(room);
-    return;
-  }
-
-  if (type === "invite-partner") {
-    if (room.mode !== "2x2") {
-      throw new Error("Duplas só existem no modo 2x2.");
-    }
-    if (room.phase !== "lobby") {
-      throw new Error("As duplas só podem ser definidas no lobby.");
-    }
-    if (room.players.length !== 4) {
-      throw new Error("As duplas aparecem quando a sala tiver 4 jogadores.");
-    }
-    if (player.teamId) {
-      throw new Error("Você já tem dupla definida.");
-    }
-    if (room.pendingInvite) {
-      throw new Error("Já existe um convite pendente.");
-    }
-    const targetId = String(payload.targetId || "");
-    const target = getPlayer(room, targetId);
-    if (!target || target.id === playerId) {
-      throw new Error("Jogador inválido para dupla.");
-    }
-    if (target.teamId) {
-      throw new Error("Esse jogador já está em uma dupla.");
-    }
-    room.pendingInvite = { fromId: playerId, toId: targetId };
-    systemMessage(room, `${player.name} chamou ${target.name} para formar dupla.`);
-    pushRoomState(room);
-    return;
-  }
-
-  if (type === "respond-partner-invite") {
-    if (room.mode !== "2x2") {
-      throw new Error("Duplas só existem no modo 2x2.");
-    }
-    if (!room.pendingInvite || room.pendingInvite.toId !== playerId) {
-      throw new Error("Nenhum convite pendente para você.");
-    }
-    const inviter = getPlayer(room, room.pendingInvite.fromId);
-    if (!inviter) {
-      room.pendingInvite = null;
-      pushRoomState(room);
-      return;
-    }
-    if (!payload.accept) {
-      systemMessage(room, `${player.name} recusou o convite de dupla de ${inviter.name}.`);
-      room.pendingInvite = null;
-      pushRoomState(room);
-      return;
-    }
-    assignTeamsFromAcceptedInvite(room, inviter.id, playerId);
-    const otherPlayers = room.players.filter((item) => item.teamId && item.teamId !== inviter.teamId);
-    systemMessage(room, `${inviter.name} e ${player.name} agora jogam juntos.`);
-    if (otherPlayers.length === 2) {
-      systemMessage(room, `${otherPlayers[0].name} e ${otherPlayers[1].name} ficaram na outra dupla.`);
-    }
-    pushRoomState(room);
-    return;
-  }
-
-  if (type === "reset-teams") {
-    if (room.mode !== "2x2") {
-      throw new Error("Duplas só existem no modo 2x2.");
-    }
-    if (!player.isHost || room.phase !== "lobby") {
-      throw new Error("Só o host pode refazer as duplas no lobby.");
-    }
-    clearPairing(room);
-    systemMessage(room, "As duplas foram resetadas.");
-    pushRoomState(room);
-    return;
-  }
-
-  if (type === "choose-word") {
-    if (room.drawerId !== playerId || room.phase !== "choosing") {
-      throw new Error("Só o desenhista escolhe a palavra.");
-    }
-    const word = room.wordOptions.find((option) => option === String(payload.word || ""));
-    if (!word) {
-      throw new Error("Palavra inválida.");
-    }
-    startPlaying(room, word);
-    return;
-  }
-
-  if (type === "guess") {
-    if (room.phase !== "playing") {
-      throw new Error("A rodada não está aceitando palpites.");
-    }
-    if (playerId === room.drawerId) {
-      throw new Error("O desenhista não pode palpitar.");
-    }
-    if (room.guessedPlayerIds.includes(playerId)) {
-      return;
-    }
-
-    const guessText = String(payload.text || "").trim().slice(0, 60);
-    if (!guessText) {
-      return;
-    }
-
-    const isCorrect = normalizeWord(guessText) === normalizeWord(room.word);
-    if (isCorrect) {
-      const awardedPoints = computeGuessPoints(room);
-      room.guessedPlayerIds.push(playerId);
-      if (room.mode === "2x2") {
-        const partner = getPartner(room, room.drawerId);
-        if (!partner || partner.id !== playerId) {
-          roundMessage(room, {
-            type: "system",
-            text: `${player.name} acertou, mas apenas o par do desenhista pontua nesta rodada.`,
-          });
-          pushRoomState(room);
-          return;
-        }
-        player.score += awardedPoints;
-        const drawer = getDrawer(room);
-        if (drawer) {
-          drawer.score += awardedPoints;
-        }
-      } else {
-        player.score += awardedPoints;
-      }
-      roundMessage(room, {
-        type: "correct",
-        playerId,
-        playerName: player.name,
-        text: "acertou!",
-      });
-      systemMessage(
-        room,
-        room.mode === "2x2"
-          ? `${player.name} acertou a palavra e a dupla marcou ${awardedPoints} pontos.`
-          : `${player.name} acertou a palavra e marcou ${awardedPoints} pontos.`
-      );
-      pushRoomState(room);
-      finishTurn(room, "guessed");
-      return;
-    }
-
-    roundMessage(room, {
-      type: "guess",
-      playerId,
-      playerName: player.name,
-      text: guessText,
-    });
-    pushRoomState(room);
-    return;
-  }
-
-  if (type === "room-message") {
-    const text = String(payload.text || "").trim().slice(0, 220);
-    if (!text) {
-      return;
-    }
-    pushFeedEntry(room.roomChat, {
-      id: randomId("msg"),
-      type: "room",
-      playerId,
-      playerName: player.name,
-      text,
-      createdAt: Date.now(),
-    }, 100);
-    pushRoomState(room);
-    return;
-  }
-
-  if (type === "voice-state") {
-    player.voiceEnabled = Boolean(payload.enabled);
-    player.voiceMuted = Boolean(payload.muted);
-    pushRoomState(room);
-    return;
-  }
-
-  if (type === "voice-signal") {
-    const targetId = String(payload.targetId || "");
-    const target = getPlayer(room, targetId);
-    if (!target) {
-      throw new Error("Destino de voz não encontrado.");
-    }
-    sendEventToPlayer(targetId, {
-      type: "voice-signal",
-      fromId: playerId,
-      data: payload.data || {},
-    });
-    return;
-  }
-
-  if (type === "clear-board") {
-    validateDrawerAction(room, playerId);
-    room.strokes = [];
-    room.liveStroke = null;
-    pushRoomState(room);
-    return;
-  }
-
-  if (type === "begin-stroke") {
-    validateDrawerAction(room, playerId);
-    const stroke = sanitizeStrokeBase(payload);
-    const point = { x: clampPoint(payload.x), y: clampPoint(payload.y) };
-
-    if (stroke.tool === "pen" || stroke.tool === "eraser") {
-      stroke.points = [point];
-    } else {
-      stroke.from = point;
-      stroke.to = point;
-    }
-
-    room.liveStroke = stroke;
-    pushRoomState(room);
-    return;
-  }
-
-  if (type === "extend-stroke") {
-    validateDrawerAction(room, playerId);
-    if (!room.liveStroke) {
-      return;
-    }
-    const point = { x: clampPoint(payload.x), y: clampPoint(payload.y) };
-    if (room.liveStroke.tool === "pen" || room.liveStroke.tool === "eraser") {
-      room.liveStroke.points.push(point);
-    } else {
-      room.liveStroke.to = point;
-    }
-    pushRoomState(room);
-    return;
-  }
-
-  if (type === "end-stroke") {
-    validateDrawerAction(room, playerId);
-    if (!room.liveStroke) {
-      return;
-    }
-    const point = { x: clampPoint(payload.x), y: clampPoint(payload.y) };
-    if (room.liveStroke.tool === "pen" || room.liveStroke.tool === "eraser") {
-      room.liveStroke.points.push(point);
-    } else {
-      room.liveStroke.to = point;
-    }
-    room.strokes.push(room.liveStroke);
-    room.liveStroke = null;
-    if (room.strokes.length > 500) {
-      room.strokes = room.strokes.slice(-500);
-    }
-    pushRoomState(room);
-    return;
-  }
-
-  throw new Error("Ação inválida.");
-}
-
-async function handleApi(req, res, url) {
-  const pathname = url.pathname;
-
-  if (req.method === "POST" && pathname === "/api/rooms/create") {
-    const body = await readBody(req);
-    const { room, playerId } = createRoom(body.playerName, body.mode);
+  if (req.method === "GET") {
+    const db = await readAccountsDb();
     sendJson(res, 200, {
-      playerId,
-      room: serializeRoom(room, playerId),
+      users: db.users.map(buildPublicUser),
     });
     return true;
   }
 
-  if (req.method === "GET" && pathname === "/api/rooms") {
-    const publicRooms = [...rooms.values()]
-      .filter((room) => room.players.length > 0)
-      .map(serializePublicRoom)
-      .sort((a, b) => {
-        if (a.phase === "lobby" && b.phase !== "lobby") return -1;
-        if (a.phase !== "lobby" && b.phase === "lobby") return 1;
-        return a.roomCode.localeCompare(b.roomCode);
-      });
-
-    sendJson(res, 200, { rooms: publicRooms });
-    return true;
-  }
-
-  if (req.method === "POST" && pathname === "/api/rooms/join") {
+  if (req.method === "POST") {
     const body = await readBody(req);
-    const { room, playerId } = joinRoom(body.roomCode, body.playerName);
-    sendJson(res, 200, {
-      playerId,
-      room: serializeRoom(room, playerId),
-    });
-    return true;
-  }
+    const username = String(body.username || "").trim().toLowerCase();
+    const password = String(body.password || "").trim();
 
-  if (req.method === "POST" && pathname === "/api/rooms/leave") {
-    const body = await readBody(req);
-    leaveRoom(String(body.playerId || ""));
-    sendJson(res, 200, { ok: true });
-    return true;
-  }
-
-  if (req.method === "GET" && pathname === "/api/state") {
-    const playerId = String(url.searchParams.get("playerId") || "");
-    const room = getRoomByPlayer(playerId);
-    if (!room) {
-      sendJson(res, 404, { error: "Sala não encontrada." });
-      return true;
-    }
-    sendJson(res, 200, { room: serializeRoom(room, playerId) });
-    return true;
-  }
-
-  if (req.method === "GET" && pathname === "/api/events") {
-    const playerId = String(url.searchParams.get("playerId") || "");
-    const room = getRoomByPlayer(playerId);
-    if (!room) {
-      sendJson(res, 404, { error: "Sala não encontrada." });
+    if (!username || !password) {
+      sendJson(res, 400, { error: "Usuario e senha sao obrigatorios." });
       return true;
     }
 
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-store",
-      Connection: "keep-alive",
-    });
-
-    res.write(`data: ${JSON.stringify({ type: "room-state", room: serializeRoom(room, playerId) })}\n\n`);
-
-    if (!eventStreams.has(playerId)) {
-      eventStreams.set(playerId, new Set());
-    }
-    eventStreams.get(playerId).add(res);
-
-    const player = getPlayer(room, playerId);
-    if (player && !player.connected) {
-      player.connected = true;
-      pushRoomState(room);
+    const db = await readAccountsDb();
+    if (db.users.some((item) => item.username === username)) {
+      sendJson(res, 409, { error: "Esse usuario ja existe." });
+      return true;
     }
 
-    req.on("close", () => {
-      const streams = eventStreams.get(playerId);
-      if (streams) {
-        streams.delete(res);
-        if (!streams.size) {
-          eventStreams.delete(playerId);
-          const activeRoom = getRoomByPlayer(playerId);
-          const activePlayer = activeRoom ? getPlayer(activeRoom, playerId) : null;
-          if (activePlayer) {
-            activePlayer.connected = false;
-            pushRoomState(activeRoom);
-          }
-        }
-      }
+    const nextUser = sanitizeUserRecord({
+      username,
+      password,
+      displayName: username,
+      role: "user",
     });
+
+    db.users.push(nextUser);
+    await writeAccountsDb(db);
+
+    if (USE_SUPABASE) {
+      await ensureUserProjectsFileRemote(nextUser.username);
+    } else {
+      await ensureUserProjectsFile(nextUser.username);
+    }
+
+    sendJson(res, 200, { user: buildPublicUser(nextUser) });
     return true;
   }
 
-  if (req.method === "POST" && pathname === "/api/action") {
+  return false;
+}
+
+async function handleProjectsApi(req, res, url, user) {
+  const parts = url.pathname.split("/").filter(Boolean);
+  const projectId = parts[2] ? decodeURIComponent(parts[2]) : "";
+
+  if (req.method === "GET" && parts.length === 2) {
+    const db = await readProjectsDb(user.username);
+    const projects = db.projects
+      .map(buildProjectSummary)
+      .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+
+    sendJson(res, 200, { projects });
+    return true;
+  }
+
+  if (req.method === "GET" && parts.length === 3) {
+    const db = await readProjectsDb(user.username);
+    const project = db.projects.find((item) => item.id === projectId);
+
+    if (!project) {
+      sendJson(res, 404, { error: "Projeto nao encontrado." });
+      return true;
+    }
+
+    sendJson(res, 200, { project });
+    return true;
+  }
+
+  if (req.method === "POST" && parts.length === 2) {
     const body = await readBody(req);
-    handleAction(String(body.playerId || ""), String(body.type || ""), body.payload || {});
+    const project = sanitizeProjectRecord(body);
+
+    if (!isValidProject(project)) {
+      sendJson(res, 400, { error: "Projeto invalido." });
+      return true;
+    }
+
+    const db = await readProjectsDb(user.username);
+    const nextProject = {
+      ...project,
+      updatedAt: new Date().toISOString(),
+    };
+
+    db.projects = db.projects.filter((item) => item.id !== nextProject.id);
+    db.projects.unshift(nextProject);
+    await writeProjectsDb(user.username, db);
+
+    sendJson(res, 200, { project: nextProject });
+    return true;
+  }
+
+  if (req.method === "PUT" && parts.length === 3) {
+    const body = await readBody(req);
+    const db = await readProjectsDb(user.username);
+    const existingIndex = db.projects.findIndex((item) => item.id === projectId);
+
+    if (existingIndex < 0) {
+      sendJson(res, 404, { error: "Projeto nao encontrado." });
+      return true;
+    }
+
+    const nextProject = sanitizeProjectRecord({
+      ...db.projects[existingIndex],
+      ...body,
+      id: projectId,
+      updatedAt: new Date().toISOString(),
+    });
+
+    db.projects.splice(existingIndex, 1);
+    db.projects.unshift(nextProject);
+    await writeProjectsDb(user.username, db);
+
+    sendJson(res, 200, { project: nextProject });
+    return true;
+  }
+
+  if (req.method === "DELETE" && parts.length === 3) {
+    const db = await readProjectsDb(user.username);
+    const nextProjects = db.projects.filter((item) => item.id !== projectId);
+
+    if (nextProjects.length === db.projects.length) {
+      sendJson(res, 404, { error: "Projeto nao encontrado." });
+      return true;
+    }
+
+    await writeProjectsDb(user.username, { projects: nextProjects });
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -998,44 +624,94 @@ async function handleApi(req, res, url) {
   return false;
 }
 
+async function serveStatic(req, res, url) {
+  const relativePath = url.pathname === "/" ? "/index.html" : url.pathname;
+  const decodedPath = decodeURIComponent(relativePath);
+  const safePath = path.normalize(decodedPath).replace(/^(\.\.[/\\])+/, "");
+  const filePath = path.resolve(ROOT, `.${safePath}`);
+
+  if (!filePath.startsWith(ROOT)) {
+    send(res, 403, "Forbidden");
+    return;
+  }
+
+  try {
+    const file = await fsp.readFile(filePath);
+    const extension = path.extname(filePath).toLowerCase();
+    const contentType = MIME_TYPES[extension] || "application/octet-stream";
+    const extraHeaders = extension === ".html"
+      ? { "Cache-Control": "no-store" }
+      : {};
+
+    send(res, 200, file, contentType, extraHeaders);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      send(res, 404, "Not found");
+      return;
+    }
+
+    sendJson(res, 500, { error: "Erro interno ao servir arquivo." });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
-    if (url.pathname.startsWith("/api/")) {
-      const handled = await handleApi(req, res, url);
+    if (url.pathname === "/api/login" || url.pathname === "/api/session") {
+      const handled = await handleAuthApi(req, res, url);
       if (!handled) {
-        sendJson(res, 404, { error: "Rota não encontrada." });
+        sendJson(res, 404, { error: "Rota nao encontrada." });
       }
       return;
     }
 
-    const relativePath = url.pathname === "/" ? "/index.html" : url.pathname;
-    const safePath = path.normalize(decodeURIComponent(relativePath)).replace(/^(\.\.[/\\])+/, "");
-    const filePath = path.join(ROOT, safePath);
-
-    if (!filePath.startsWith(ROOT)) {
-      send(res, 403, "Forbidden");
+    if (url.pathname === "/api/config") {
+      const handled = await handleConfigApi(req, res);
+      if (!handled) {
+        sendJson(res, 404, { error: "Rota nao encontrada." });
+      }
       return;
     }
 
-    fs.readFile(filePath, (error, data) => {
-      if (error) {
-        if (error.code === "ENOENT") {
-          send(res, 404, "Not found");
-          return;
-        }
-        send(res, 500, "Server error");
+    if (url.pathname === "/api/admin/users") {
+      const user = await getAuthenticatedUser(req);
+      if (!user) {
+        sendJson(res, 401, { error: "Acesso nao autorizado." });
         return;
       }
 
-      send(res, 200, data, MIME_TYPES[path.extname(filePath).toLowerCase()] || "application/octet-stream");
-    });
+      const handled = await handleAdminUsersApi(req, res, user);
+      if (!handled) {
+        sendJson(res, 404, { error: "Rota nao encontrada." });
+      }
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/projects")) {
+      const user = await getAuthenticatedUser(req);
+      if (!user) {
+        sendJson(res, 401, { error: "Acesso nao autorizado." });
+        return;
+      }
+
+      const handled = await handleProjectsApi(req, res, url, user);
+      if (!handled) {
+        sendJson(res, 404, { error: "Rota nao encontrada." });
+      }
+      return;
+    }
+
+    await serveStatic(req, res, url);
   } catch (error) {
-    sendJson(res, 500, { error: "Erro interno.", details: String(error.message || error) });
+    sendJson(res, 500, {
+      error: "Erro interno.",
+      details: String(error?.message || error),
+    });
   }
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Draw Battle: http://${HOST}:${PORT}/`);
+  console.log(`Gestao de Gastos online: http://${HOST}:${PORT}/`);
+  console.log(`Storage mode: ${USE_SUPABASE ? "supabase" : "arquivo-local"}`);
 });
